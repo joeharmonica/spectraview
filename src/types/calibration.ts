@@ -2,7 +2,8 @@ export type ModelType = 'pls' | 'pcr' | 'mlr' | 'ridge' | 'lasso';
 
 export type FeatureStrategy =
   | { type: 'full_spectrum' }
-  | { type: 'wavelength_range'; minWl: number; maxWl: number }
+  | { type: 'wavelength_range'; minWl: number; maxWl: number }  // legacy — prefer wavelength_ranges
+  | { type: 'wavelength_ranges'; ranges: Array<{ minWl: number; maxWl: number }> }
   | { type: 'specific_wavelengths'; wavelengths: number[] }
   | { type: 'peak_heights'; minProminence: number };
 

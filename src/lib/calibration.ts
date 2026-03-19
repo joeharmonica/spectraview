@@ -345,6 +345,34 @@ export function extractFeatures(
     };
   }
 
+  if (strategy.type === 'wavelength_ranges') {
+    // Concatenate intensities from multiple wavelength windows into one feature row
+    const rows: number[][] = [];
+    let featureLabels: string[] = [];
+
+    for (const label of included) {
+      const s = spectraMap.get(label.spectrumId);
+      if (!s) continue;
+      const y = applyProcessing(s.wavelengths, s.intensities, s.processing);
+      const rowValues: number[] = [];
+      const thisLabels: string[] = [];
+      for (const range of strategy.ranges) {
+        const inRange = s.wavelengths
+          .map((w, i) => ({ w, y: y[i]! }))
+          .filter(p => p.w >= range.minWl && p.w <= range.maxWl);
+        rowValues.push(...inRange.map(p => p.y));
+        thisLabels.push(...inRange.map(p => p.w.toFixed(1) + ' nm'));
+      }
+      if (featureLabels.length === 0) featureLabels = thisLabels;
+      rows.push(rowValues);
+    }
+    return {
+      X: rows,
+      featureLabels,
+      includedIds: included.map(l => l.spectrumId),
+    };
+  }
+
   if (strategy.type === 'specific_wavelengths') {
     const targets = strategy.wavelengths;
     const rows: number[][] = [];

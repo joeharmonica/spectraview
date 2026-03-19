@@ -91,10 +91,6 @@ function Step1Labels({
     ? features.wavelengths[0]!
     : null;
 
-  const [wlText, setWlText] = useState(() =>
-    features.type === 'specific_wavelengths' ? features.wavelengths.join(', ') : ''
-  );
-
   const trainCount = labels.filter(l => l.split === 'train' && l.yValue !== null).length;
   const testCount  = labels.filter(l => l.split === 'test'  && l.yValue !== null).length;
   const labelled   = labels.filter(l => l.yValue !== null).length;
@@ -107,20 +103,17 @@ function Step1Labels({
   }
 
   // Feature mode for UI grouping
-  type XMode = 'univariate' | 'full' | 'range' | 'multi_wl' | 'peaks';
+  type XMode = 'univariate' | 'full' | 'range';
   const currentMode: XMode =
     features.type === 'full_spectrum' ? 'full'
-    : features.type === 'wavelength_range' ? 'range'
-    : features.type === 'peak_heights' ? 'peaks'
+    : features.type === 'wavelength_range' || features.type === 'wavelength_ranges' ? 'range'
     : features.type === 'specific_wavelengths' && features.wavelengths.length <= 1 ? 'univariate'
-    : 'multi_wl';
+    : 'full'; // fallback for removed modes
 
   const setMode = (mode: XMode) => {
     if (mode === 'univariate') onFeaturesChange({ type: 'specific_wavelengths', wavelengths: singleWl !== null ? [singleWl] : [] });
     else if (mode === 'full') onFeaturesChange({ type: 'full_spectrum' });
-    else if (mode === 'range') onFeaturesChange({ type: 'wavelength_range', minWl: 300, maxWl: 800 });
-    else if (mode === 'multi_wl') onFeaturesChange({ type: 'specific_wavelengths', wavelengths: [] });
-    else onFeaturesChange({ type: 'peak_heights', minProminence: 5 });
+    else onFeaturesChange({ type: 'wavelength_ranges', ranges: [{ minWl: 300, maxWl: 800 }] });
   };
 
   const isMultivariate = currentMode !== 'univariate';
@@ -152,7 +145,7 @@ function Step1Labels({
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          {/* Univariate */}
+          {/* Univariate — single wavelength */}
           <div
             onClick={() => setMode('univariate')}
             className={`cursor-pointer rounded-xl border-2 p-3 transition-colors
@@ -196,85 +189,71 @@ function Step1Labels({
             <p className="text-xs text-slate-400 ml-5">All wavelength intensities. Recommended with PLS-R or PCR to handle collinear variables.</p>
           </div>
 
-          {/* Wavelength range */}
+          {/* Multiple wavelength ranges */}
           <div
             onClick={() => setMode('range')}
-            className={`cursor-pointer rounded-xl border-2 p-3 transition-colors
+            className={`cursor-pointer rounded-xl border-2 p-3 transition-colors sm:col-span-2
               ${currentMode === 'range' ? 'border-blue-400 bg-blue-50' : 'border-slate-200 hover:border-slate-300'}`}
           >
             <div className="flex items-center gap-2 mb-1">
               <span className={`w-3 h-3 rounded-full border-2 flex-shrink-0 ${currentMode === 'range' ? 'border-blue-500 bg-blue-500' : 'border-slate-300'}`} />
-              <span className="text-sm font-semibold text-slate-700">Wavelength range</span>
+              <span className="text-sm font-semibold text-slate-700">Multiple wavelength ranges</span>
               <span className="text-xs bg-violet-100 text-violet-700 rounded-full px-1.5 py-0.5 font-medium">Multivariate</span>
             </div>
-            <p className="text-xs text-slate-400 ml-5">Intensities within a defined nm window. Useful to focus on a known absorption band.</p>
-            {currentMode === 'range' && features.type === 'wavelength_range' && (
-              <div className="flex gap-3 mt-2 ml-5" onClick={e => e.stopPropagation()}>
-                <div className="flex items-center gap-1.5">
-                  <span className="text-xs text-slate-500">From</span>
-                  <input type="number" value={features.minWl}
-                    onChange={e => onFeaturesChange({ ...features, minWl: Number(e.target.value) })}
-                    className="w-20 text-sm border border-slate-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-300" />
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <span className="text-xs text-slate-500">To</span>
-                  <input type="number" value={features.maxWl}
-                    onChange={e => onFeaturesChange({ ...features, maxWl: Number(e.target.value) })}
-                    className="w-20 text-sm border border-slate-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-300" />
-                </div>
-                <span className="text-xs text-slate-400 self-center">nm</span>
-              </div>
-            )}
-          </div>
-
-          {/* Multiple specific wavelengths */}
-          <div
-            onClick={() => setMode('multi_wl')}
-            className={`cursor-pointer rounded-xl border-2 p-3 transition-colors
-              ${currentMode === 'multi_wl' ? 'border-blue-400 bg-blue-50' : 'border-slate-200 hover:border-slate-300'}`}
-          >
-            <div className="flex items-center gap-2 mb-1">
-              <span className={`w-3 h-3 rounded-full border-2 flex-shrink-0 ${currentMode === 'multi_wl' ? 'border-blue-500 bg-blue-500' : 'border-slate-300'}`} />
-              <span className="text-sm font-semibold text-slate-700">Specific wavelengths</span>
-              <span className="text-xs bg-violet-100 text-violet-700 rounded-full px-1.5 py-0.5 font-medium">Multivariate</span>
-            </div>
-            <p className="text-xs text-slate-400 ml-5">Intensities at named wavelengths only. Good when you know the informative bands.</p>
-            {currentMode === 'multi_wl' && (
-              <div className="mt-2 ml-5" onClick={e => e.stopPropagation()}>
-                <input
-                  type="text"
-                  value={wlText}
-                  onChange={e => {
-                    setWlText(e.target.value);
-                    const wls = e.target.value.split(',').map(s => parseFloat(s.trim())).filter(v => !isNaN(v));
-                    onFeaturesChange({ type: 'specific_wavelengths', wavelengths: wls });
-                  }}
-                  placeholder="e.g. 280, 350, 675"
-                  className="w-full text-sm border border-slate-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-300"
-                />
-              </div>
-            )}
-          </div>
-
-          {/* Peak heights */}
-          <div
-            onClick={() => setMode('peaks')}
-            className={`cursor-pointer rounded-xl border-2 p-3 transition-colors sm:col-span-2
-              ${currentMode === 'peaks' ? 'border-blue-400 bg-blue-50' : 'border-slate-200 hover:border-slate-300'}`}
-          >
-            <div className="flex items-center gap-2 mb-1">
-              <span className={`w-3 h-3 rounded-full border-2 flex-shrink-0 ${currentMode === 'peaks' ? 'border-blue-500 bg-blue-500' : 'border-slate-300'}`} />
-              <span className="text-sm font-semibold text-slate-700">Peak heights</span>
-              <span className="text-xs bg-violet-100 text-violet-700 rounded-full px-1.5 py-0.5 font-medium">Multivariate</span>
-            </div>
-            <p className="text-xs text-slate-400 ml-5">Auto-detected peak intensities across all spectra. Peaks are aligned by wavelength; missing peaks get 0.</p>
-            {currentMode === 'peaks' && features.type === 'peak_heights' && (
-              <div className="flex items-center gap-3 mt-2 ml-5" onClick={e => e.stopPropagation()}>
-                <span className="text-xs text-slate-500">Min prominence</span>
-                <input type="range" min={1} max={50} value={features.minProminence}
-                  onChange={e => onFeaturesChange({ type: 'peak_heights', minProminence: Number(e.target.value) })}
-                  className="w-28 accent-blue-500" />
-                <span className="text-xs text-slate-600 w-14">{features.minProminence}% of max</span>
+            <p className="text-xs text-slate-400 ml-5">Intensities within one or more nm windows. Add ranges to focus on multiple known absorption bands simultaneously.</p>
+            {currentMode === 'range' && features.type === 'wavelength_ranges' && (
+              <div className="mt-3 ml-5 space-y-2" onClick={e => e.stopPropagation()}>
+                {features.ranges.map((range, idx) => (
+                  <div key={idx} className="flex flex-wrap items-center gap-2">
+                    <span className="text-xs text-slate-400 w-4 text-right">{idx + 1}.</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs text-slate-500">From</span>
+                      <input
+                        type="number"
+                        value={range.minWl}
+                        onChange={e => {
+                          const updated = features.ranges.map((r, i) =>
+                            i === idx ? { ...r, minWl: Number(e.target.value) } : r);
+                          onFeaturesChange({ ...features, ranges: updated });
+                        }}
+                        className="w-20 text-sm border border-slate-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-300"
+                      />
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs text-slate-500">To</span>
+                      <input
+                        type="number"
+                        value={range.maxWl}
+                        onChange={e => {
+                          const updated = features.ranges.map((r, i) =>
+                            i === idx ? { ...r, maxWl: Number(e.target.value) } : r);
+                          onFeaturesChange({ ...features, ranges: updated });
+                        }}
+                        className="w-20 text-sm border border-slate-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-300"
+                      />
+                    </div>
+                    <span className="text-xs text-slate-400">nm</span>
+                    {features.ranges.length > 1 && (
+                      <button
+                        onClick={() => onFeaturesChange({
+                          ...features,
+                          ranges: features.ranges.filter((_, i) => i !== idx),
+                        })}
+                        className="text-xs text-red-400 hover:text-red-600 px-1.5 py-0.5 rounded transition-colors"
+                        title="Remove this range"
+                      >✕</button>
+                    )}
+                  </div>
+                ))}
+                <button
+                  onClick={() => onFeaturesChange({
+                    ...features,
+                    ranges: [...features.ranges, { minWl: 300, maxWl: 800 }],
+                  })}
+                  className="mt-1 text-xs text-blue-500 hover:text-blue-700 font-medium transition-colors"
+                >
+                  + Add range
+                </button>
               </div>
             )}
           </div>
@@ -416,7 +395,7 @@ function Step2Config({
     return spectra.filter(s => trainIds.has(s.id));
   }, [spectra, labels]);
 
-  const isMultivariate = features.type !== 'specific_wavelengths' || (features.wavelengths?.length ?? 0) > 1;
+  const isMultivariate = !(features.type === 'specific_wavelengths' && features.wavelengths.length <= 1);
 
   // LOOCV preview for PLS/PCR
   const loocvData = useMemo(() => {
