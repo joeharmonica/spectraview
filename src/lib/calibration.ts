@@ -1,7 +1,7 @@
 import type { Spectrum } from '../types/spectrum';
 import type {
   ModelConfig, ModelType, FeatureStrategy, SampleLabel,
-  CalibrationResults, PredictionRow, CoefficientRow,
+  CalibrationResults, PredictionRow, CoefficientRow, ModelComparisonRow,
 } from '../types/calibration';
 import { applyProcessing, findPeaks } from './processing';
 
@@ -610,16 +610,120 @@ export function runCalibration(
     coefficients = featureLabels.map((label, i) => ({ label, value: coefOrig[i] ?? 0 }));
   }
 
-  return {
-    model,
-    nComponents: config.nComponents,
+  // Comparison: run all models with same features/params
+  let comparison: ModelComparisonRow[] | null = null;
+  if (config.compareAll) {
+    const MODEL_LABELS: Record<ModelType, string> = {
+      pls: 'PLS-R', pcr: 'PCR', mlr: 'MLR', ridge: 'Ridge', lasso: 'Lasso',
+    };
+    const allModels: ModelType[] = ['pls', 'pcr', 'mlr', 'ridge', 'lasso'];
+    comparison = allModels.map(m => {
+      try {
+        const sub = runCalibration(spectra, labels, { ...config, model: m, compareAll: false });
+        return {
+          model: m, label: MODEL_LABELS[m],
+          trainR2: sub.trainR2, trainRMSE: sub.trainRMSE,
+          testR2: sub.testR2, testRMSE: sub.testRMSE,
+          cvRMSE: sub.cvRMSE,
+        };
+      } catch {
+        return {
+          model: m, label: MODEL_LABELS[m],
+          trainR2: NaN, trainRMSE: NaN,
+          testR2: null, testRMSE: null, cvRMSE: null,
+        };
+      }
+    });
+    // Sort best first (by test R² if available, else train R²)
+    comparison.sort((a, b) => {
+      const aScore = a.testR2 ?? a.trainR2;
+      const bScore = b.testR2 ?? b.trainR2;
+      return (isNaN(bScore) ? -1 : bScore) - (isNaN(aScore) ? -1 : aScore);
+    });
+  }
+
+  const baseResult = {
+    model, nComponents: config.nComponents,
     trainR2, trainRMSE, trainMAE,
     testR2, testRMSE, testMAE,
-    cvRMSE,
-    predictions,
-    coefficients,
-    featureLabels,
+    cvRMSE, predictions, coefficients, featureLabels,
+    comparison,
   };
+
+  return { ...baseResult, summary: generateSummary(baseResult as CalibrationResults, '') };
+}
+
+// ─── Human-readable summary ────────────────────────────────────────────────────
+
+export function generateSummary(results: CalibrationResults, yLabel: string): string {
+  const MODEL_NAMES: Record<ModelType, string> = {
+    pls: 'PLS-R', pcr: 'PCR', mlr: 'MLR', ridge: 'Ridge', lasso: 'Lasso',
+  };
+  const trainCount = results.predictions.filter(p => p.split === 'train').length;
+  const testCount  = results.predictions.filter(p => p.split === 'test').length;
+  const r2 = results.trainR2;
+  const isUnivariate = results.featureLabels.length === 1;
+
+  const quality =
+    r2 >= 0.99 ? 'excellent' :
+    r2 >= 0.95 ? 'very good' :
+    r2 >= 0.85 ? 'good' :
+    r2 >= 0.70 ? 'moderate' :
+    r2 >= 0.50 ? 'fair' : 'poor';
+
+  const modelLabel = MODEL_NAMES[results.model];
+  const compSuffix = ['pls', 'pcr'].includes(results.model)
+    ? ` (${results.nComponents} component${results.nComponents !== 1 ? 's' : ''})`
+    : '';
+  const responseLabel = yLabel ? `predicting ${yLabel}` : 'predicting the response';
+
+  let s = '';
+
+  if (isUnivariate) {
+    const wl = results.featureLabels[0] ?? '';
+    const slope = results.coefficients[0]?.value ?? 0;
+    const pearsonR = Math.sqrt(Math.abs(r2)) * (slope >= 0 ? 1 : -1);
+    s += `Simple linear calibration at ${wl} — ${modelLabel} model trained on ${trainCount} spectrum${trainCount !== 1 ? 'a' : 'um'}. `;
+    s += `R² = ${r2.toFixed(4)}, Pearson r = ${pearsonR.toFixed(4)}, slope = ${slope.toFixed(6)}, RMSE = ${results.trainRMSE.toFixed(4)} — ${quality} fit for ${responseLabel}. `;
+    if (r2 < 0.85) s += 'Consider trying a different wavelength or switching to multivariate mode. ';
+  } else {
+    s += `${modelLabel}${compSuffix} trained on ${trainCount} spectrum${trainCount !== 1 ? 'a' : 'um'}: `;
+    s += `Train R² = ${r2.toFixed(4)}, RMSE = ${results.trainRMSE.toFixed(4)} — ${quality} fit for ${responseLabel}. `;
+  }
+
+  if (results.testR2 !== null && testCount > 0) {
+    const overfitting = results.testR2 < r2 - 0.15;
+    s += `Test set (n=${testCount}): R² = ${results.testR2.toFixed(4)}, RMSE = ${results.testRMSE!.toFixed(4)}. `;
+    if (overfitting) {
+      s += 'The train–test gap indicates overfitting — reduce components or add more training samples. ';
+    } else {
+      s += 'Train and test metrics agree, suggesting reliable generalisation. ';
+    }
+  }
+
+  if (results.cvRMSE !== null) {
+    s += `Cross-validation RMSE = ${results.cvRMSE.toFixed(4)}. `;
+  }
+
+  // Top influential wavelengths (skip for PCR which has no wavelength-level coefs)
+  if (!isUnivariate && results.model !== 'pcr' && results.coefficients.length > 0 && results.coefficients.length <= 400) {
+    const top = [...results.coefficients]
+      .sort((a, b) => Math.abs(b.value) - Math.abs(a.value))
+      .slice(0, 3)
+      .map(c => c.label);
+    s += `Key spectral features: ${top.join(', ')}.`;
+  }
+
+  // Comparison highlight
+  if (results.comparison && results.comparison.length > 0) {
+    const best = results.comparison[0]!;
+    if (best.model !== results.model) {
+      const bestScore = (best.testR2 ?? best.trainR2).toFixed(4);
+      s += ` Among all models compared, ${best.label} performed best (R² = ${bestScore}).`;
+    }
+  }
+
+  return s.trim();
 }
 
 // ─── CSV / Report generators ───────────────────────────────────────────────────
@@ -644,52 +748,137 @@ export function generateReportHtml(
   results: CalibrationResults,
   yLabel: string,
   scatterPng: string,
+  allResults?: CalibrationResults[],
 ): string {
-  const fmt = (v: number | null, d = 4) => v === null ? '—' : v.toFixed(d);
+  const fmt = (v: number | null, d = 4) => v === null ? '—' : isNaN(v as number) ? 'error' : (v as number).toFixed(d);
   const modelNames: Record<ModelType, string> = {
     pls: 'PLS-R (NIPALS)', pcr: 'PCR', mlr: 'MLR', ridge: 'Ridge', lasso: 'Lasso',
   };
-  const rows = results.predictions.map(p =>
-    `<tr><td>${p.spectrumLabel}</td><td>${p.split}</td><td>${p.yTrue}</td><td>${p.yPred.toFixed(4)}</td><td>${p.residual.toFixed(4)}</td></tr>`
+
+  const summary = generateSummary(results, yLabel);
+
+  const predRows = results.predictions.map(p =>
+    `<tr class="${p.split === 'test' ? 'test-row' : ''}">
+      <td>${p.spectrumLabel}</td><td><span class="split-${p.split}">${p.split}</span></td>
+      <td>${p.yTrue}</td><td>${p.yPred.toFixed(4)}</td><td>${p.residual.toFixed(4)}</td>
+    </tr>`
   ).join('');
+
+  const comparisonSection = results.comparison && results.comparison.length > 0 ? `
+<h2>Model Comparison</h2>
+<p style="color:#64748b;font-size:14px">All models trained with the same features and evaluated on the same data. Best result highlighted. Click any model heading below to jump to its detailed results.</p>
+<table>
+  <thead><tr>
+    <th>Model</th><th>Train R²</th><th>Train RMSE</th>
+    ${results.comparison[0]!.testR2 !== null ? '<th>Test R²</th><th>Test RMSE</th>' : ''}
+    ${results.comparison[0]!.cvRMSE !== null ? '<th>CV RMSE</th>' : ''}
+  </tr></thead>
+  <tbody>
+    ${results.comparison.map((r, i) => {
+      const isBest = i === 0;
+      const isCurrent = r.model === results.model;
+      return `<tr style="${isBest ? 'background:#eff6ff;font-weight:600;' : ''}${isCurrent ? 'outline:2px solid #3b82f6;' : ''}">
+        <td><a href="#model-${r.model}" style="color:inherit;text-decoration:none">${r.label}${isBest ? ' <span style="color:#3b82f6;font-size:11px">★ best</span>' : ''}${isCurrent && !isBest ? ' <span style="color:#64748b;font-size:11px">← selected</span>' : ''}</a></td>
+        <td>${fmt(r.trainR2)}</td>
+        <td>${fmt(r.trainRMSE)}</td>
+        ${r.testR2 !== null ? `<td>${fmt(r.testR2)}</td><td>${fmt(r.testRMSE)}</td>` : ''}
+        ${r.cvRMSE !== null ? `<td>${fmt(r.cvRMSE)}</td>` : ''}
+      </tr>`;
+    }).join('')}
+  </tbody>
+</table>` : '';
+
+  // Per-model detail sections (only when allResults is provided, i.e. compare mode)
+  const allModelsSection = allResults && allResults.length > 1 ? allResults.map(r => {
+    const rSummary = generateSummary(r, yLabel);
+    const isUniR = r.featureLabels.length === 1;
+    const slopeR = isUniR ? (r.coefficients[0]?.value ?? null) : null;
+    const pearsonRR = (slopeR !== null && r.trainR2 >= 0)
+      ? Math.sqrt(Math.abs(r.trainR2)) * (slopeR >= 0 ? 1 : -1) : null;
+    const predRowsR = r.predictions.map(p =>
+      `<tr class="${p.split === 'test' ? 'test-row' : ''}">
+        <td>${p.spectrumLabel}</td><td><span class="split-${p.split}">${p.split}</span></td>
+        <td>${p.yTrue}</td><td>${p.yPred.toFixed(4)}</td><td>${p.residual.toFixed(4)}</td>
+      </tr>`
+    ).join('');
+    return `
+<hr style="margin:40px 0;border:none;border-top:2px solid #e2e8f0">
+<h2 id="model-${r.model}">${modelNames[r.model]}</h2>
+<div class="summary-box">${rSummary}</div>
+<div class="metrics">
+  <div class="metric"><div class="label">Train R²</div><div class="val">${fmt(r.trainR2)}</div></div>
+  <div class="metric"><div class="label">Train RMSE</div><div class="val">${fmt(r.trainRMSE)}</div></div>
+  <div class="metric"><div class="label">Train MAE</div><div class="val">${fmt(r.trainMAE)}</div></div>
+  ${pearsonRR !== null ? `<div class="metric"><div class="label">Pearson r</div><div class="val">${pearsonRR.toFixed(4)}</div></div>` : ''}
+  ${slopeR !== null ? `<div class="metric"><div class="label">Sensitivity</div><div class="val">${slopeR.toExponential(3)}</div></div>` : ''}
+  ${r.testR2 !== null ? `
+  <div class="metric"><div class="label">Test R²</div><div class="val">${fmt(r.testR2)}</div></div>
+  <div class="metric"><div class="label">Test RMSE</div><div class="val">${fmt(r.testRMSE)}</div></div>
+  <div class="metric"><div class="label">Test MAE</div><div class="val">${fmt(r.testMAE)}</div></div>` : ''}
+  ${r.cvRMSE !== null ? `<div class="metric"><div class="label">CV RMSE</div><div class="val">${fmt(r.cvRMSE)}</div></div>` : ''}
+</div>
+<h3 style="color:#475569;margin-top:20px">Predictions</h3>
+<p style="color:#64748b;font-size:13px">Green rows are test samples (held out). Red residuals exceed 2× training RMSE.</p>
+<table><thead><tr><th>Spectrum</th><th>Split</th><th>${yLabel || 'Y'} (true)</th><th>${yLabel || 'Y'} (pred)</th><th>Residual</th></tr></thead>
+<tbody>${predRowsR}</tbody></table>`;
+  }).join('') : '';
 
   return `<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="utf-8"><title>SpectraView Calibration Report</title>
 <style>
-body{font-family:system-ui,sans-serif;max-width:900px;margin:40px auto;padding:0 20px;color:#1e293b}
-h1{color:#3b82f6}h2{color:#475569;border-bottom:1px solid #e2e8f0;padding-bottom:6px}
-table{border-collapse:collapse;width:100%}th,td{border:1px solid #e2e8f0;padding:8px 12px;text-align:left}
+body{font-family:system-ui,sans-serif;max-width:960px;margin:40px auto;padding:0 20px;color:#1e293b}
+h1{color:#3b82f6;margin-bottom:4px}h2{color:#475569;border-bottom:1px solid #e2e8f0;padding-bottom:6px;margin-top:32px}
+table{border-collapse:collapse;width:100%;margin:8px 0}th,td{border:1px solid #e2e8f0;padding:8px 12px;text-align:left}
 th{background:#f8fafc;font-weight:600}tr:nth-child(even){background:#f8fafc}
-.metrics{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin:16px 0}
-.metric{background:#f1f5f9;border-radius:8px;padding:16px}.metric .label{font-size:12px;color:#64748b}
-.metric .val{font-size:22px;font-weight:700;color:#1e293b}.badge{display:inline-block;background:#3b82f6;color:#fff;border-radius:4px;padding:2px 8px;font-size:12px}
+.metrics{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px;margin:16px 0}
+.metric{background:#f1f5f9;border-radius:8px;padding:14px}
+.metric .label{font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.04em}
+.metric .val{font-size:20px;font-weight:700;color:#1e293b;margin-top:2px;font-variant-numeric:tabular-nums}
+.badge{display:inline-block;background:#3b82f6;color:#fff;border-radius:4px;padding:2px 9px;font-size:12px;font-weight:600}
+.summary-box{background:#f0fdf4;border:1px solid #86efac;border-radius:10px;padding:16px 20px;margin:20px 0;font-size:14px;line-height:1.7;color:#14532d}
 img{max-width:100%;border-radius:8px;margin:12px 0}
+.split-train{background:#dbeafe;color:#1d4ed8;border-radius:4px;padding:1px 6px;font-size:11px;font-weight:600}
+.split-test{background:#d1fae5;color:#065f46;border-radius:4px;padding:1px 6px;font-size:11px;font-weight:600}
+.test-row{background:#f0fdf4!important}
 </style></head>
 <body>
 <h1>SpectraView Calibration Report</h1>
-<p><strong>Generated:</strong> ${new Date().toLocaleString()}</p>
-<p><strong>Model:</strong> <span class="badge">${modelNames[results.model]}</span> &nbsp;
-   <strong>Components:</strong> ${results.nComponents} &nbsp;
-   <strong>Response variable:</strong> ${yLabel}</p>
+<p style="color:#64748b;font-size:13px"><strong>Generated:</strong> ${new Date().toLocaleString()} &nbsp;·&nbsp;
+  <strong>Model:</strong> <span class="badge">${modelNames[results.model]}</span> &nbsp;·&nbsp;
+  <strong>Response:</strong> ${yLabel || '(unnamed)'}
+  ${['pls','pcr'].includes(results.model) ? `&nbsp;·&nbsp; <strong>Components:</strong> ${results.nComponents}` : ''}
+</p>
 
-<h2>Metrics</h2>
+<div class="summary-box">
+  <strong>Summary:</strong> ${summary}
+</div>
+
+<h2>Performance Metrics</h2>
 <div class="metrics">
   <div class="metric"><div class="label">Train R²</div><div class="val">${fmt(results.trainR2)}</div></div>
   <div class="metric"><div class="label">Train RMSE</div><div class="val">${fmt(results.trainRMSE)}</div></div>
   <div class="metric"><div class="label">Train MAE</div><div class="val">${fmt(results.trainMAE)}</div></div>
+  ${results.testR2 !== null ? `
   <div class="metric"><div class="label">Test R²</div><div class="val">${fmt(results.testR2)}</div></div>
   <div class="metric"><div class="label">Test RMSE</div><div class="val">${fmt(results.testRMSE)}</div></div>
-  <div class="metric"><div class="label">Test MAE</div><div class="val">${fmt(results.testMAE)}</div></div>
+  <div class="metric"><div class="label">Test MAE</div><div class="val">${fmt(results.testMAE)}</div></div>` : ''}
   ${results.cvRMSE !== null ? `<div class="metric"><div class="label">CV RMSE</div><div class="val">${fmt(results.cvRMSE)}</div></div>` : ''}
 </div>
 
+${comparisonSection}
+
+${allResults && allResults.length > 1 ? '' : `
 <h2>Predicted vs Actual</h2>
-<img src="${scatterPng}" alt="Scatter plot" />
+${scatterPng ? `<img src="${scatterPng}" alt="Scatter plot" />` : '<p style="color:#94a3b8;font-size:13px">Chart not available in this export.</p>'}
 
 <h2>Predictions</h2>
-<table><thead><tr><th>Spectrum</th><th>Split</th><th>Y True</th><th>Y Predicted</th><th>Residual</th></tr></thead>
-<tbody>${rows}</tbody></table>
+<p style="color:#64748b;font-size:13px">Green rows are test samples (held out from training). Residuals exceeding 2× RMSE may indicate outliers.</p>
+<table><thead><tr><th>Spectrum</th><th>Split</th><th>${yLabel || 'Y'} (true)</th><th>${yLabel || 'Y'} (pred)</th><th>Residual</th></tr></thead>
+<tbody>${predRows}</tbody></table>
+`}
+
+${allModelsSection}
 
 </body></html>`;
 }
@@ -710,6 +899,6 @@ export function downloadCoefficientsCsv(results: CalibrationResults) {
   downloadBlob(coefficientsToCsv(results), 'calibration_coefficients.csv', 'text/csv');
 }
 
-export function downloadReport(results: CalibrationResults, yLabel: string, scatterPng: string) {
-  downloadBlob(generateReportHtml(results, yLabel, scatterPng), 'calibration_report.html', 'text/html');
+export function downloadReport(results: CalibrationResults, yLabel: string, scatterPng: string, allResults?: CalibrationResults[]) {
+  downloadBlob(generateReportHtml(results, yLabel, scatterPng, allResults), 'calibration_report.html', 'text/html');
 }

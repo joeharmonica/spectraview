@@ -121,9 +121,51 @@ The **CSV** button downloads one `.csv` file per selected spectrum containing th
 
 ---
 
+### Calibration & Modelling
+
+Open via the **Calibration** button in the toolbar. A 3-step wizard builds quantitative spectral models that predict a continuous variable (concentration, pH, etc.) from spectral data.
+
+#### Step 1 — Define Variables
+
+Assign a known reference value (Y) to each spectrum. Spectra with no value are excluded from the model. Optionally mark each spectrum as **Train** or **Test** to evaluate generalisation on held-out data.
+
+**Spectral Input Features (X) — three modes:**
+
+| Mode | Description | Best for |
+|------|-------------|----------|
+| **Single wavelength** | Intensity at one nm point | Beer-Lambert univariate calibrations; shows Pearson *r* and sensitivity (slope) |
+| **Full spectrum** | All wavelength points as feature vector | Exploiting whole-spectrum information with PLS-R or PCR |
+| **Multiple wavelength ranges** | One or more `[min, max]` nm windows concatenated into one feature row | Focusing on known absorption bands; click **+ Add range** to add windows, ✕ to remove |
+
+#### Step 2 — Configure Model
+
+| Setting | Options |
+|---------|---------|
+| **Algorithm** | PLS-R · PCR · MLR · Ridge (L2) · Lasso (L1) |
+| **Components** | Number of latent variables for PLS-R / PCR; LOOCV chart (enlarged) guides selection |
+| **λ (lambda)** | Regularisation strength for Ridge / Lasso |
+| **Auto-scale** | Zero-mean, unit-variance standardisation (recommended) |
+| **CV folds** | k-fold cross-validation (0 = off) |
+| **Compare all models** | Located in the Model section (not Parameters). Runs PLS-R, PCR, MLR, Ridge, and Lasso **sequentially** — a live progress bar shows the current model and percentage. Results open with tabbed view. |
+
+#### Step 3 — Review Results
+
+**Single model mode:**
+- **Summary banner** — auto-generated natural-language assessment of fit quality, overfitting risk (train–test R² gap > 0.15), and top influential wavelengths. Colour-coded: green (R² ≥ 0.90), amber (0.70–0.89), red (< 0.70).
+- **Metric cards** — Train R², RMSE, MAE; Test R², RMSE, MAE (when test split exists); CV RMSE (when cross-validation enabled). Univariate mode additionally shows **Pearson *r*** and **Sensitivity (slope)**.
+- **Section banners** — each chart section (Scatter, Residuals, Coefficients, Predictions) has a contextual banner explaining what to look for.
+- **Downloads** — Results CSV · Coefficients CSV · HTML Report.
+
+**Compare all models mode:**
+- **Overview tab** — comparison summary banner, ranked comparison table (click a row to jump to that model's tab), and R² bar chart. ★ marks the best model on each tab button.
+- **Per-model tabs** (PLS-R · PCR · MLR · Ridge · Lasso) — each tab shows the full individual results: summary banner, metric cards, scatter plot, residuals, coefficient chart, and predictions table with section banners throughout.
+- **HTML Report** — covers all models: comparison table with anchor links + a dedicated metrics and predictions section per model.
+
+---
+
 ### Interactive Tutorial
 
-Click the **?** button in the top-right header to start a 10-step guided tour. The tour spotlights each UI section:
+Click the **?** button in the top-right header to start a 13-step guided tour. The card is 400 px wide with larger text (title 16 px, body 14 px) to comfortably fit longer descriptions. Steps that spotlight a UI element dim the rest of the screen; steps without a target appear centred.
 
 1. Welcome & data persistence
 2. Spectrum Library — loading, selecting, renaming, colours
@@ -134,7 +176,10 @@ Click the **?** button in the top-right header to start a 10-step guided tour. T
 7. Peak annotations toggle
 8. Analysis panel — all five processing steps
 9. CSV export & auto-save
-10. Wrap-up tips
+10. Calibration & Modelling — 3-step wizard, Compare all models option
+11. Spectral Input Features (X) — univariate, full spectrum, multiple ranges
+12. Model results & comparison — sequential runs, progress bar, per-model tabs, section banners
+13. Wrap-up tips
 
 Navigate with ← → buttons, keyboard arrow keys, or click any progress dot to jump to a step. Press **Esc** to exit.
 
@@ -156,10 +201,10 @@ Reference data for testing parsers is in `sample/`:
 
 | File | Format |
 |------|--------|
-| `sample/cary3500_sample.csv` | Cary 3500 UV-Vis |
-| `sample/rf6000_2d_sample.csv` | RF-6000 2D fluorescence |
-| `sample/rf6000_3d_sample.csv` | RF-6000 3D EEM |
-| `sample/r1f_sample.csv` | LabSolutions R1F |
+| `sample/Absorption-Cary3500.csv` | Cary 3500 UV-Vis |
+| `sample/Fluorescent-2D-RF6000.csv` | RF-6000 2D fluorescence |
+| `sample/Fluorescent-3D-RF6000.csv` | RF-6000 3D EEM |
+| `sample/Fluorescent-R1F.csv` | LabSolutions R1F |
 
 ---
 
@@ -196,7 +241,7 @@ npm test          # run once
 npm run test:ui   # Vitest browser UI
 ```
 
-98 tests across 5 suites covering parsers, processing, edge cases, medium features, and low-level features.
+128 tests across 6 suites covering parsers, processing, calibration, edge cases, medium features, and low-level features.
 
 ### Build
 
@@ -212,7 +257,9 @@ npm run preview  # Serve dist/ locally
 ```
 src/
 ├── types/
-│   └── spectrum.ts           # Spectrum, ViewMode, ProcessingOptions, HighlightedPeak
+│   ├── spectrum.ts           # Spectrum, ViewMode, ProcessingOptions, HighlightedPeak
+│   └── calibration.ts        # ModelType, FeatureStrategy, ModelConfig, CalibrationResults,
+│                             # SampleLabel, PredictionRow, CoefficientRow, ModelComparisonRow
 ├── parsers/
 │   ├── index.ts              # Format detection, colour palette, parseFile()
 │   ├── cary3500.ts
@@ -222,6 +269,8 @@ src/
 ├── lib/
 │   ├── processing.ts         # applyProcessing, cropToRange, smoothSG, subtractBaseline,
 │   │                         # integrateTrapezoid, findPeaks, ensureOdd
+│   ├── calibration.ts        # extractFeatures, runCalibration (PLS/PCR/MLR/Ridge/Lasso),
+│   │                         # generateSummary, generateReportHtml
 │   └── db.ts                 # Dexie/IndexedDB persistence
 ├── hooks/
 │   └── useSpectra.ts         # useReducer state + IndexedDB sync + all dispatch actions
@@ -232,9 +281,10 @@ src/
     ├── Toolbar.tsx            # Top bar — view modes, chart controls, action buttons
     ├── ChartWorkspace.tsx     # Plotly chart (overlap, stacked, heatmap + hover preview)
     ├── AnalysisPanel.tsx      # Right panel — processing controls + AUC table
+    ├── CalibrationPage.tsx    # 3-step calibration wizard (variables, model config, results)
     ├── PeakTableModal.tsx     # Peak detection, filter, and chart marker management
     ├── ColumnMappingModal.tsx # Column assignment dialog for unknown CSV/XLSX files
-    ├── Tutorial.tsx           # Interactive 10-step guided tour with spotlight overlay
+    ├── Tutorial.tsx           # Interactive 13-step guided tour with spotlight overlay
     ├── ColorPicker.tsx        # Inline colour picker for spectrum colours
     └── ErrorBoundary.tsx      # Chart error recovery UI
 ```

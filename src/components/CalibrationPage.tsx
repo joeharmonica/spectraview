@@ -10,13 +10,20 @@ import { DEFAULT_CONFIG } from '../types/calibration';
 import {
   runCalibration, loocvRmseByComponent,
   downloadResultsCsv, downloadCoefficientsCsv, downloadReport,
-  extractFeatures,
+  extractFeatures, generateSummary,
 } from '../lib/calibration';
 
 // @ts-ignore
 import * as _PlotlyRaw from 'plotly.js-dist-min';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const PlotlyLib: any = (_PlotlyRaw as any).default ?? _PlotlyRaw;
+
+const MODEL_LABELS: Record<ModelType, string> = {
+  pls: 'PLS-R', pcr: 'PCR', mlr: 'MLR', ridge: 'Ridge', lasso: 'Lasso',
+};
+const MODEL_NAMES: Record<ModelType, string> = {
+  pls: 'PLS-R (NIPALS)', pcr: 'PCR', mlr: 'MLR', ridge: 'Ridge', lasso: 'Lasso',
+};
 
 interface Props {
   spectra: Spectrum[];
@@ -60,6 +67,21 @@ function Tip({ text }: { text: string }) {
   );
 }
 
+// ─── Section banner ────────────────────────────────────────────────────────────
+
+function SectionBanner({ text, color = 'slate' }: { text: string; color?: 'blue' | 'amber' | 'violet' | 'slate' | 'emerald' }) {
+  const cls = {
+    blue:    'bg-blue-50 border-blue-100 text-blue-700',
+    amber:   'bg-amber-50 border-amber-100 text-amber-700',
+    violet:  'bg-violet-50 border-violet-100 text-violet-700',
+    slate:   'bg-slate-50 border-slate-200 text-slate-500',
+    emerald: 'bg-emerald-50 border-emerald-100 text-emerald-700',
+  }[color];
+  return (
+    <div className={`border rounded-lg px-3 py-2 text-xs leading-relaxed mb-3 ${cls}`}>{text}</div>
+  );
+}
+
 // ─── Step 1: Variables & Labels ────────────────────────────────────────────────
 
 function Step1Labels({
@@ -86,7 +108,6 @@ function Step1Labels({
     onLabelsChange(shuffled.map((l, i) => ({ ...l, split: i < trainN ? 'train' : 'test' })));
   };
 
-  // Derived single-wavelength value for the univariate input
   const singleWl = features.type === 'specific_wavelengths' && features.wavelengths.length === 1
     ? features.wavelengths[0]!
     : null;
@@ -102,13 +123,12 @@ function Step1Labels({
     if (new Set(ys).size === 1) errors.push('All Y values are identical — cannot build a model.');
   }
 
-  // Feature mode for UI grouping
   type XMode = 'univariate' | 'full' | 'range';
   const currentMode: XMode =
     features.type === 'full_spectrum' ? 'full'
     : features.type === 'wavelength_range' || features.type === 'wavelength_ranges' ? 'range'
     : features.type === 'specific_wavelengths' && features.wavelengths.length <= 1 ? 'univariate'
-    : 'full'; // fallback for removed modes
+    : 'full';
 
   const setMode = (mode: XMode) => {
     if (mode === 'univariate') onFeaturesChange({ type: 'specific_wavelengths', wavelengths: singleWl !== null ? [singleWl] : [] });
@@ -145,7 +165,7 @@ function Step1Labels({
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          {/* Univariate — single wavelength */}
+          {/* Univariate */}
           <div
             onClick={() => setMode('univariate')}
             className={`cursor-pointer rounded-xl border-2 p-3 transition-colors
@@ -277,7 +297,6 @@ function Step1Labels({
             <button
               onClick={() => randomSplit(0.7)}
               className="px-3 py-1.5 text-xs border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 transition-colors"
-              title="Randomly assign 70% to Train, 30% to Test"
             >
               Random 70/30 split
             </button>
@@ -330,7 +349,6 @@ function Step1Labels({
                           <span
                             className="flex-shrink-0 inline-flex items-center px-1.5 py-0.5 rounded-full text-white text-[10px] font-medium"
                             style={{ backgroundColor: s.color }}
-                            title="Chart label"
                           >
                             {s.label}
                           </span>
@@ -397,7 +415,6 @@ function Step2Config({
 
   const isMultivariate = !(features.type === 'specific_wavelengths' && features.wavelengths.length <= 1);
 
-  // LOOCV preview for PLS/PCR
   const loocvData = useMemo(() => {
     if (config.model !== 'pls' && config.model !== 'pcr') return null;
     if (trainSpectra.length < 3) return null;
@@ -476,6 +493,26 @@ function Step2Config({
             );
           })}
         </div>
+
+        {/* Compare all models — lives in Model section */}
+        <div className="mt-3 pt-3 border-t border-slate-100">
+          <label
+            className={`flex items-start gap-3 rounded-xl border-2 px-3 py-2.5 transition-colors cursor-pointer
+              ${config.compareAll ? 'border-violet-400 bg-violet-50' : 'border-transparent hover:border-slate-200'}`}
+          >
+            <input type="checkbox" checked={config.compareAll}
+              onChange={e => set({ compareAll: e.target.checked })}
+              className="mt-0.5 accent-violet-500 flex-shrink-0" />
+            <span className="min-w-0">
+              <span className="text-sm text-slate-700 font-semibold flex items-center gap-2 flex-wrap">
+                Compare all models
+                <span className="text-xs bg-violet-100 text-violet-700 rounded-full px-1.5 py-0.5 font-medium">PLS · PCR · MLR · Ridge · Lasso</span>
+                <Tip text="Runs all five regression models with the same features and parameters, then ranks them by R² in the Results. Models run sequentially — results appear in individual tabs. Adds a few seconds to computation." />
+              </span>
+              <p className="text-xs text-slate-400 mt-0.5">Results include a comparison table ranking all models — useful for selecting the best method for your data.</p>
+            </span>
+          </label>
+        </div>
       </section>
 
       {/* Parameters */}
@@ -511,15 +548,19 @@ function Step2Config({
                       type: 'scatter', mode: 'lines+markers',
                       line: { color: '#3b82f6', width: 2 },
                       marker: {
-                        size: 7,
+                        size: 8,
                         color: loocvData.map((_, i) => i + 1 === Math.min(config.nComponents, maxComp) ? '#ef4444' : '#3b82f6'),
+                        line: {
+                          color: loocvData.map((_, i) => i + 1 === Math.min(config.nComponents, maxComp) ? '#b91c1c' : '#1d4ed8'),
+                          width: 1.5,
+                        },
                       },
                     } as Data]}
                     layout={{
-                      height: 150, margin: { t: 8, r: 10, b: 30, l: 50 },
+                      height: 240, margin: { t: 12, r: 16, b: 40, l: 56 },
                       paper_bgcolor: 'transparent', plot_bgcolor: 'transparent',
-                      xaxis: { title: { text: 'Components', font: { size: 10 } }, tickfont: { size: 10 }, dtick: 1 },
-                      yaxis: { title: { text: 'RMSE', font: { size: 10 } }, tickfont: { size: 10 } },
+                      xaxis: { title: { text: 'Components', font: { size: 11 } }, tickfont: { size: 11 }, dtick: 1, gridcolor: '#f1f5f9' },
+                      yaxis: { title: { text: 'LOOCV RMSE', font: { size: 11 } }, tickfont: { size: 11 }, gridcolor: '#f1f5f9' },
                       showlegend: false,
                     } as Partial<Layout>}
                     config={{ displayModeBar: false, responsive: true }}
@@ -587,105 +628,81 @@ function Step2Config({
 
 // ─── Step 3: Results ───────────────────────────────────────────────────────────
 
-function Step3Results({
-  results, yLabel, spectra,
+/** Renders the full results for one model: metrics, summary, scatter, residuals, coefficients, predictions. */
+function ModelResultsPanel({
+  results, yLabel, spectra, plotDivRef,
 }: {
   results: CalibrationResults;
   yLabel: string;
   spectra: Spectrum[];
+  plotDivRef?: React.MutableRefObject<HTMLElement | null>;
 }) {
-  const plotDivRef = useRef<HTMLElement | null>(null);
   const spectraMap = new Map(spectra.map(s => [s.id, s]));
-
   const trainPreds = results.predictions.filter(p => p.split === 'train');
   const testPreds  = results.predictions.filter(p => p.split === 'test');
   const allTrue = results.predictions.map(p => p.yTrue);
   const min1to1 = Math.min(...allTrue);
   const max1to1 = Math.max(...allTrue);
 
-  const modelNames: Record<string, string> = {
-    pls: 'PLS-R (NIPALS)', pcr: 'PCR', mlr: 'MLR', ridge: 'Ridge', lasso: 'Lasso',
-  };
-
-  const handleDownloadReport = async () => {
-    let png = '';
-    if (plotDivRef.current) {
-      try { png = await PlotlyLib.toImage(plotDivRef.current, { format: 'png', width: 600, height: 420 }); }
-      catch { /* skip embedded chart */ }
-    }
-    downloadReport(results, yLabel, png);
-  };
-
-  const fmt = (v: number | null, d = 4) => v === null ? '—' : v.toFixed(d);
+  const fmt = (v: number | null, d = 4) => v === null ? '—' : isNaN(v) ? 'err' : v.toFixed(d);
   const showCoefficients = results.model !== 'pcr' && results.coefficients.length <= 100;
+  const isUnivariate = results.featureLabels.length === 1;
+  const slope = isUnivariate ? (results.coefficients[0]?.value ?? null) : null;
+  const pearsonR = (slope !== null && results.trainR2 >= 0)
+    ? Math.sqrt(Math.abs(results.trainR2)) * (slope >= 0 ? 1 : -1)
+    : null;
+
+  const summary = generateSummary(results, yLabel);
+
+  const qualityColour =
+    results.trainR2 >= 0.90 ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+    : results.trainR2 >= 0.70 ? 'bg-amber-50 border-amber-200 text-amber-900'
+    : 'bg-red-50 border-red-200 text-red-900';
 
   const metricCards = [
     { label: 'Train R²', value: fmt(results.trainR2), tip: 'Proportion of variance explained on the training set. Closer to 1 is better, but high train R² with poor test R² indicates overfitting.' },
     { label: 'Train RMSE', value: fmt(results.trainRMSE), tip: 'Root Mean Square Error on the training set — in the same units as Y. Lower is better.' },
     { label: 'Train MAE', value: fmt(results.trainMAE), tip: 'Mean Absolute Error on training set. Less sensitive to outliers than RMSE.' },
-    { label: 'Test R²', value: fmt(results.testR2), tip: 'R² on the held-out test set. This is the key metric for real-world predictive performance.' },
+    ...(pearsonR !== null ? [{ label: 'Pearson r', value: pearsonR.toFixed(4), tip: 'Pearson correlation coefficient. Indicates linear strength and direction between wavelength intensity and Y.' }] : []),
+    ...(slope !== null ? [{ label: 'Sensitivity (slope)', value: slope.toExponential(3), tip: 'Change in predicted Y per unit intensity at the selected wavelength. Higher absolute value = more sensitive.' }] : []),
+    { label: 'Test R²', value: fmt(results.testR2), tip: 'R² on the held-out test set. Key metric for real-world predictive performance.' },
     { label: 'Test RMSE', value: fmt(results.testRMSE), tip: 'RMSE on the test set. Compare to the range of Y values to assess practical accuracy.' },
     { label: 'Test MAE', value: fmt(results.testMAE), tip: 'Mean Absolute Error on the test set.' },
     ...(results.cvRMSE !== null ? [{
-      label: `CV RMSE (${results.nComponents}-comp)`,
+      label: `CV RMSE`,
       value: fmt(results.cvRMSE),
-      tip: 'Cross-validation RMSE estimated on the training set via k-fold. A more reliable estimate of generalisation than train RMSE.',
+      tip: 'Cross-validation RMSE estimated on the training set via k-fold. More reliable than train RMSE for assessing generalisation.',
     }] : []),
   ];
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-6 space-y-8">
+    <div className="space-y-8">
 
-      {/* Header + downloads */}
-      <section>
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-          <div>
-            <h3 className="text-base font-semibold text-slate-800">{modelNames[results.model] ?? results.model}</h3>
-            <p className="text-xs text-slate-400 mt-0.5">Response: {yLabel} · {results.nComponents} component{results.nComponents !== 1 ? 's' : ''}</p>
+      {/* Metrics grid */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+        {metricCards.map(m => (
+          <div key={m.label} className="bg-slate-50 rounded-xl p-3 relative">
+            <p className="text-xs text-slate-400 flex items-center gap-0.5">
+              {m.label}
+              <Tip text={m.tip} />
+            </p>
+            <p className="text-lg font-semibold text-slate-800 mt-0.5 font-mono">{m.value}</p>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <button onClick={() => downloadResultsCsv(results)}
-              className="px-3 py-1.5 text-xs border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 transition-colors flex items-center gap-1.5">
-              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-              </svg>
-              Results CSV
-            </button>
-            {results.coefficients.length > 0 && (
-              <button onClick={() => downloadCoefficientsCsv(results)}
-                className="px-3 py-1.5 text-xs border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 transition-colors flex items-center gap-1.5">
-                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                </svg>
-                Coefficients CSV
-              </button>
-            )}
-            <button onClick={handleDownloadReport}
-              className="px-3 py-1.5 text-xs bg-violet-500 text-white rounded-lg hover:bg-violet-600 transition-colors flex items-center gap-1.5">
-              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-              </svg>
-              Report HTML
-            </button>
-          </div>
-        </div>
+        ))}
+      </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-          {metricCards.map(m => (
-            <div key={m.label} className="bg-slate-50 rounded-xl p-3 relative">
-              <p className="text-xs text-slate-400 flex items-center gap-0.5">
-                {m.label}
-                <Tip text={m.tip} />
-              </p>
-              <p className="text-lg font-semibold text-slate-800 mt-0.5 font-mono">{m.value}</p>
-            </div>
-          ))}
-        </div>
-      </section>
+      {/* Summary */}
+      <div className={`border rounded-xl px-4 py-3 text-xs leading-relaxed ${qualityColour}`}>
+        <span className="font-semibold mr-1">Summary:</span>{summary}
+      </div>
 
-      {/* Scatter plot */}
+      {/* Scatter */}
       <section>
-        <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Predicted vs Actual</h3>
+        <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Predicted vs Actual</h4>
+        <SectionBanner
+          color="blue"
+          text="Points should cluster along the dashed 1:1 line — tighter scatter means better predictions. Outliers may indicate mislabelled or anomalous samples. Hover to identify spectra by name."
+        />
         <Plot
           data={[
             {
@@ -722,19 +739,29 @@ function Step3Results({
           config={{ displayModeBar: false, responsive: true }}
           style={{ width: '100%' }}
           useResizeHandler
-          onInitialized={(_, div) => { plotDivRef.current = div; }}
+          onInitialized={(_, div) => { if (plotDivRef) plotDivRef.current = div; }}
         />
       </section>
 
       {/* Residuals */}
       <section>
-        <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Residuals (True − Predicted)</h3>
+        <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Residuals (True − Predicted)</h4>
+        <SectionBanner
+          color="amber"
+          text="Residuals should be small and randomly distributed around zero. Systematic trends or clusters suggest the model is missing a relationship in the data. Bars exceeding 2× training RMSE are flagged in red."
+        />
         <Plot
           data={[{
             x: results.predictions.map(p => { const s = spectraMap.get(p.spectrumId); return s?.label || s?.name || p.spectrumId; }),
             y: results.predictions.map(p => p.residual),
             type: 'bar',
-            marker: { color: results.predictions.map(p => p.split === 'train' ? '#3b82f6' : '#10b981') },
+            marker: {
+              color: results.predictions.map(p =>
+                Math.abs(p.residual) > (results.trainRMSE ?? 0) * 2
+                  ? '#ef4444'
+                  : p.split === 'train' ? '#3b82f6' : '#10b981'
+              ),
+            },
             hovertemplate: '%{x}<br>Residual: %{y:.4f}<extra></extra>',
           } as Data]}
           layout={{
@@ -749,20 +776,19 @@ function Step3Results({
           style={{ width: '100%' }}
           useResizeHandler
         />
-        <p className="text-xs text-slate-400 mt-1">Blue = train · Green = test · Red residual = &gt;2× train RMSE</p>
+        <p className="text-xs text-slate-400 mt-1">Blue = train · Green = test · Red = &gt;2× train RMSE</p>
       </section>
 
-      {/* Coefficient chart */}
+      {/* Coefficients */}
       {showCoefficients && results.coefficients.length > 0 && (
         <section>
-          <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">
+          <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
             {results.model === 'pls' ? 'PLS Regression Coefficients' : 'Regression Coefficients'}
-          </h3>
-          <p className="text-xs text-slate-400 mb-3">
-            {results.model === 'pls'
-              ? 'Shows how much each wavelength contributes to the prediction. Positive = positively correlated with Y; negative = inversely correlated.'
-              : 'Direct coefficient weights assigned to each wavelength feature.'}
-          </p>
+          </h4>
+          <SectionBanner
+            color="violet"
+            text="Wavelengths with large absolute coefficients drive predictions most. Blue bars indicate positive correlation with the response; red bars indicate inverse correlation. Key peaks near known absorption bands confirm the model is learning meaningful chemistry."
+          />
           <Plot
             data={[{
               x: results.coefficients.map(c => c.label),
@@ -793,7 +819,11 @@ function Step3Results({
 
       {/* Predictions table */}
       <section>
-        <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Predictions</h3>
+        <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Predictions</h4>
+        <SectionBanner
+          color="slate"
+          text="Green-highlighted rows are test samples — held out from training to evaluate real-world generalisation. Residuals shown in red exceed 2× the training RMSE and may indicate outliers or mislabelled samples."
+        />
         <div className="border border-slate-200 rounded-xl overflow-hidden">
           <table className="w-full text-xs">
             <thead>
@@ -827,6 +857,275 @@ function Step3Results({
           </table>
         </div>
       </section>
+    </div>
+  );
+}
+
+function Step3Results({
+  results, yLabel, spectra, allModelResults,
+}: {
+  results: CalibrationResults;
+  yLabel: string;
+  spectra: Spectrum[];
+  allModelResults: CalibrationResults[] | null;
+}) {
+  const isCompareMode = allModelResults !== null && allModelResults.length > 1;
+  const [activeTab, setActiveTab] = useState<'overview' | ModelType>(isCompareMode ? 'overview' : results.model);
+  const plotDivRef = useRef<HTMLElement | null>(null);
+
+  const activeResults = useMemo(() => {
+    if (!isCompareMode || activeTab === 'overview') return results;
+    return allModelResults!.find(r => r.model === activeTab) ?? results;
+  }, [isCompareMode, activeTab, results, allModelResults]);
+
+  const handleDownloadReport = async () => {
+    let png = '';
+    if (plotDivRef.current) {
+      try { png = await PlotlyLib.toImage(plotDivRef.current, { format: 'png', width: 600, height: 420 }); }
+      catch { /* skip */ }
+    }
+    downloadReport(results, yLabel, isCompareMode ? '' : png, allModelResults ?? undefined);
+  };
+
+  const fmt = (v: number | null, d = 4) => v === null ? '—' : isNaN(v) ? 'err' : v.toFixed(d);
+
+  // Overview comparison banner text
+  const comparisonBannerText = useMemo(() => {
+    if (!results.comparison || results.comparison.length === 0) return '';
+    const best = results.comparison[0]!;
+    const hasTest = best.testR2 !== null;
+    const metric = hasTest ? 'test R²' : 'train R²';
+    const bestScore = (best.testR2 ?? best.trainR2);
+    const currentRank = results.comparison.findIndex(r => r.model === results.model) + 1;
+    let s = `${results.comparison.length} models trained with identical features and parameters. `;
+    s += `${best.label} achieved the highest ${metric} (${bestScore.toFixed(4)})`;
+    if (currentRank > 1) {
+      const suffix = currentRank === 2 ? 'nd' : currentRank === 3 ? 'rd' : 'th';
+      const curScore = hasTest ? results.comparison[currentRank - 1]!.testR2! : results.comparison[currentRank - 1]!.trainR2;
+      s += `, while the selected ${MODEL_LABELS[results.model]} ranked ${currentRank}${suffix} (${metric} = ${curScore.toFixed(4)})`;
+    } else {
+      s += ' — matching your selected model';
+    }
+    s += '. Use the model tabs to inspect individual scatter plots, residuals, and coefficients.';
+    return s;
+  }, [results.comparison, results.model]);
+
+  return (
+    <div className="flex flex-col h-full">
+
+      {/* Header + downloads */}
+      <div className="flex-shrink-0 px-4 pt-5 pb-3">
+        <div className="flex flex-wrap items-center justify-between gap-3 max-w-4xl mx-auto">
+          <div>
+            <h3 className="text-base font-semibold text-slate-800">
+              {isCompareMode ? 'Model Comparison Results' : (MODEL_NAMES[results.model] ?? results.model)}
+            </h3>
+            <p className="text-xs text-slate-400 mt-0.5">
+              Response: {yLabel}
+              {!isCompareMode && ['pls', 'pcr'].includes(results.model) && ` · ${results.nComponents} component${results.nComponents !== 1 ? 's' : ''}`}
+              {!isCompareMode && results.featureLabels.length === 1 && ` · univariate @ ${results.featureLabels[0]}`}
+              {!isCompareMode && results.featureLabels.length > 1 && ` · ${results.featureLabels.length} features`}
+              {isCompareMode && ` · ${results.featureLabels.length === 1 ? `univariate @ ${results.featureLabels[0]}` : `${results.featureLabels.length} features`}`}
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {/* Downloads: context-sensitive */}
+            {!isCompareMode && (
+              <>
+                <button onClick={() => downloadResultsCsv(results)}
+                  className="px-3 py-1.5 text-xs border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 transition-colors flex items-center gap-1.5">
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  </svg>
+                  Results CSV
+                </button>
+                {results.coefficients.length > 0 && (
+                  <button onClick={() => downloadCoefficientsCsv(results)}
+                    className="px-3 py-1.5 text-xs border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 transition-colors flex items-center gap-1.5">
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                    </svg>
+                    Coefficients CSV
+                  </button>
+                )}
+              </>
+            )}
+            {isCompareMode && activeTab !== 'overview' && (() => {
+              const tabRes = allModelResults!.find(r => r.model === activeTab);
+              if (!tabRes) return null;
+              return (
+                <>
+                  <button onClick={() => downloadResultsCsv(tabRes)}
+                    className="px-3 py-1.5 text-xs border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 transition-colors flex items-center gap-1.5">
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                    </svg>
+                    Results CSV
+                  </button>
+                  {tabRes.coefficients.length > 0 && (
+                    <button onClick={() => downloadCoefficientsCsv(tabRes)}
+                      className="px-3 py-1.5 text-xs border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 transition-colors flex items-center gap-1.5">
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                      </svg>
+                      Coefficients CSV
+                    </button>
+                  )}
+                </>
+              );
+            })()}
+            <button onClick={handleDownloadReport}
+              className="px-3 py-1.5 text-xs bg-violet-500 text-white rounded-lg hover:bg-violet-600 transition-colors flex items-center gap-1.5">
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              {isCompareMode ? 'Report HTML (all models)' : 'Report HTML'}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Tabs — only in compare mode */}
+      {isCompareMode && (
+        <div className="flex-shrink-0 flex overflow-x-auto border-b border-slate-200 bg-slate-50/50 px-4 max-w-4xl mx-auto w-full">
+          {/* Overview tab */}
+          <button
+            onClick={() => setActiveTab('overview')}
+            className={`px-4 py-2.5 text-xs font-medium whitespace-nowrap border-b-2 transition-colors -mb-px
+              ${activeTab === 'overview'
+                ? 'border-violet-500 text-violet-600 bg-white'
+                : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+          >
+            Overview
+          </button>
+          {allModelResults!.map(r => {
+            const row = results.comparison?.find(c => c.model === r.model);
+            const score = row?.testR2 ?? row?.trainR2;
+            const isBest = results.comparison && results.comparison[0]?.model === r.model;
+            return (
+              <button
+                key={r.model}
+                onClick={() => setActiveTab(r.model)}
+                className={`px-4 py-2.5 text-xs font-medium whitespace-nowrap border-b-2 transition-colors -mb-px flex items-center gap-1
+                  ${activeTab === r.model
+                    ? 'border-blue-500 text-blue-600 bg-white'
+                    : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+              >
+                {MODEL_LABELS[r.model]}
+                {isBest && <span className="text-[9px] text-amber-500 font-bold">★</span>}
+                {score != null && !isNaN(score) && (
+                  <span className="text-[10px] text-slate-400">{score.toFixed(2)}</span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Tab content */}
+      <div className="flex-1 overflow-y-auto">
+        <div className="max-w-4xl mx-auto px-4 py-6">
+
+          {/* Overview tab */}
+          {isCompareMode && activeTab === 'overview' && results.comparison && (
+            <div className="space-y-6">
+              {/* Comparison banner */}
+              <SectionBanner
+                color="violet"
+                text={comparisonBannerText}
+              />
+
+              {/* Comparison table + chart */}
+              <section>
+                <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">
+                  Model Comparison
+                  <span className="ml-2 text-slate-400 font-normal normal-case">— ranked by test R² (or train R² if no test split)</span>
+                </h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Table */}
+                  <div className="border border-slate-200 rounded-xl overflow-hidden">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="bg-slate-50 border-b border-slate-200">
+                          <th className="px-3 py-2 text-left text-slate-500 font-semibold">Model</th>
+                          <th className="px-3 py-2 text-right text-slate-500 font-semibold">Train R²</th>
+                          <th className="px-3 py-2 text-right text-slate-500 font-semibold">Train RMSE</th>
+                          {results.comparison[0]!.testR2 !== null && <th className="px-3 py-2 text-right text-slate-500 font-semibold">Test R²</th>}
+                          {results.comparison[0]!.cvRMSE !== null && <th className="px-3 py-2 text-right text-slate-500 font-semibold">CV RMSE</th>}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {results.comparison.map((row, i) => {
+                          const isBest = i === 0 && !isNaN(row.trainR2);
+                          const isCurrent = row.model === results.model;
+                          return (
+                            <tr
+                              key={row.model}
+                              onClick={() => setActiveTab(row.model)}
+                              className={`border-b border-slate-50 cursor-pointer transition-colors
+                                ${isBest ? 'bg-blue-50/60 hover:bg-blue-50' : 'hover:bg-slate-50'}
+                                ${isCurrent ? 'ring-1 ring-inset ring-blue-300' : ''}`}
+                            >
+                              <td className="px-3 py-2 font-medium text-slate-700">
+                                {row.label}
+                                {isBest && <span className="ml-1.5 text-[10px] bg-blue-100 text-blue-700 rounded-full px-1.5 py-0.5 font-semibold">★ best</span>}
+                                {isCurrent && !isBest && <span className="ml-1.5 text-[10px] text-slate-400">← selected</span>}
+                              </td>
+                              <td className="px-3 py-2 text-right font-mono text-slate-700">{fmt(isNaN(row.trainR2) ? null : row.trainR2)}</td>
+                              <td className="px-3 py-2 text-right font-mono text-slate-700">{fmt(isNaN(row.trainRMSE) ? null : row.trainRMSE)}</td>
+                              {results.comparison![0]!.testR2 !== null && (
+                                <td className="px-3 py-2 text-right font-mono text-slate-700">{fmt(row.testR2)}</td>
+                              )}
+                              {results.comparison![0]!.cvRMSE !== null && (
+                                <td className="px-3 py-2 text-right font-mono text-slate-700">{fmt(row.cvRMSE)}</td>
+                              )}
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                    <p className="text-xs text-slate-400 px-3 py-2">Click a row to view that model's full results.</p>
+                  </div>
+                  {/* R² bar chart */}
+                  <Plot
+                    data={[{
+                      y: results.comparison.map(r => r.label),
+                      x: results.comparison.map(r => isNaN(r.trainR2) ? 0 : Math.max(0, r.testR2 ?? r.trainR2)),
+                      type: 'bar', orientation: 'h',
+                      marker: {
+                        color: results.comparison.map((r, i) =>
+                          i === 0 ? '#3b82f6' : r.model === results.model ? '#8b5cf6' : '#cbd5e1'),
+                      },
+                      hovertemplate: '%{y}: R² = %{x:.4f}<extra></extra>',
+                    } as Data]}
+                    layout={{
+                      height: 200, margin: { t: 8, r: 20, b: 40, l: 60 },
+                      paper_bgcolor: 'transparent', plot_bgcolor: 'transparent',
+                      xaxis: { title: { text: results.comparison[0]?.testR2 !== null ? 'Test R²' : 'Train R²', font: { size: 10 } }, range: [0, 1], tickfont: { size: 10 }, gridcolor: '#f1f5f9' },
+                      yaxis: { tickfont: { size: 10 }, automargin: true, gridcolor: '#f1f5f9' },
+                      showlegend: false,
+                    } as Partial<Layout>}
+                    config={{ displayModeBar: false, responsive: true }}
+                    style={{ width: '100%' }}
+                    useResizeHandler
+                  />
+                </div>
+              </section>
+            </div>
+          )}
+
+          {/* Individual model tab (compare mode) or single model view */}
+          {(!isCompareMode || (isCompareMode && activeTab !== 'overview')) && (
+            <ModelResultsPanel
+              results={isCompareMode ? (allModelResults!.find(r => r.model === activeTab) ?? results) : results}
+              yLabel={yLabel}
+              spectra={spectra}
+              plotDivRef={!isCompareMode ? plotDivRef : undefined}
+            />
+          )}
+
+        </div>
+      </div>
     </div>
   );
 }
@@ -879,11 +1178,12 @@ export function CalibrationPage({ spectra, onClose }: Props) {
   const [labels, setLabels] = useState<SampleLabel[]>(() =>
     spectra.map(s => ({ spectrumId: s.id, yValue: null, split: 'train' }))
   );
-  // X variable selection lives in Step 1, passed to Step 2 for LOOCV, and to runCalibration
   const [features, setFeatures] = useState<FeatureStrategy>(DEFAULT_CONFIG.features);
   const [config, setConfig] = useState<ModelConfig>(DEFAULT_CONFIG);
   const [results, setResults] = useState<CalibrationResults | null>(null);
+  const [allModelResults, setAllModelResults] = useState<CalibrationResults[] | null>(null);
   const [running, setRunning] = useState(false);
+  const [progress, setProgress] = useState<{ current: number; total: number; label: string } | null>(null);
   const [error, setError] = useState('');
   const [yLabel, setYLabel] = useState('');
 
@@ -891,21 +1191,77 @@ export function CalibrationPage({ spectra, onClose }: Props) {
   const canStep2 = trainCount >= 2;
   const canStep3 = results !== null;
 
-  // Merge features from Step 1 into config for running
   const effectiveConfig: ModelConfig = { ...config, features };
 
   const runModel = useCallback(async () => {
     setError('');
     setRunning(true);
-    try {
-      await new Promise(r => setTimeout(r, 30));
-      const res = runCalibration(spectra, labels, effectiveConfig);
-      setResults(res);
-      setStep(3);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setRunning(false);
+    setAllModelResults(null);
+
+    if (effectiveConfig.compareAll) {
+      const modelsToRun: ModelType[] = ['pls', 'pcr', 'mlr', 'ridge', 'lasso'];
+      const collected: CalibrationResults[] = [];
+
+      try {
+        for (let i = 0; i < modelsToRun.length; i++) {
+          const m = modelsToRun[i]!;
+          setProgress({ current: i + 1, total: modelsToRun.length, label: `Running ${MODEL_LABELS[m]}…` });
+          // Yield to React to paint the progress update
+          await new Promise(r => setTimeout(r, 20));
+          try {
+            const res = runCalibration(spectra, labels, { ...effectiveConfig, model: m, compareAll: false });
+            collected.push(res);
+          } catch {
+            // Skip failed model — it won't appear in tabs
+          }
+        }
+
+        if (collected.length === 0) throw new Error('All models failed to run. Check your data and try again.');
+
+        // Build sorted comparison from collected results
+        const comparison = [...collected]
+          .sort((a, b) => {
+            const aS = a.testR2 ?? a.trainR2;
+            const bS = b.testR2 ?? b.trainR2;
+            return (isNaN(bS) ? -1 : bS) - (isNaN(aS) ? -1 : aS);
+          })
+          .map(r => ({
+            model: r.model,
+            label: MODEL_LABELS[r.model],
+            trainR2: r.trainR2,
+            trainRMSE: r.trainRMSE,
+            testR2: r.testR2,
+            testRMSE: r.testRMSE,
+            cvRMSE: r.cvRMSE,
+          }));
+
+        // Primary result = selected model (or first if not found), enriched with comparison
+        const primaryIdx = collected.findIndex(r => r.model === effectiveConfig.model);
+        const primary = collected[primaryIdx >= 0 ? primaryIdx : 0]!;
+        const primaryWithComparison = { ...primary, comparison };
+
+        setAllModelResults(collected);
+        setResults(primaryWithComparison);
+        setStep(3);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setRunning(false);
+        setProgress(null);
+      }
+    } else {
+      try {
+        setProgress({ current: 1, total: 1, label: `Running ${MODEL_LABELS[effectiveConfig.model]}…` });
+        await new Promise(r => setTimeout(r, 30));
+        const res = runCalibration(spectra, labels, effectiveConfig);
+        setResults(res);
+        setStep(3);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setRunning(false);
+        setProgress(null);
+      }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [spectra, labels, effectiveConfig]);
@@ -943,8 +1299,32 @@ export function CalibrationPage({ spectra, onClose }: Props) {
         </div>
       )}
 
-      {/* Content */}
-      <div className="flex-1 overflow-y-auto">
+      {/* Content — relative for progress overlay positioning */}
+      <div className="flex-1 overflow-y-auto relative">
+
+        {/* Progress overlay */}
+        {running && progress && (
+          <div className="absolute inset-0 bg-white/85 backdrop-blur-[2px] flex items-center justify-center z-10">
+            <div className="bg-white rounded-2xl shadow-xl border border-slate-200 px-8 py-7 w-80 text-center">
+              <div className="w-10 h-10 border-4 border-blue-100 border-t-blue-500 rounded-full animate-spin mx-auto mb-4" />
+              <p className="text-sm font-semibold text-slate-700 mb-1">{progress.label}</p>
+              <p className="text-xs text-slate-400 mb-4">
+                Step {progress.current} of {progress.total}
+                {effectiveConfig.compareAll && ` · comparing all models`}
+              </p>
+              <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
+                <div
+                  className="bg-blue-500 h-1.5 rounded-full transition-all duration-500"
+                  style={{ width: `${Math.round((progress.current - 1) / progress.total * 100)}%` }}
+                />
+              </div>
+              <p className="text-xs text-slate-400 mt-2 font-mono">
+                {Math.round((progress.current - 1) / progress.total * 100)}%
+              </p>
+            </div>
+          </div>
+        )}
+
         {step === 1 && (
           <Step1Labels
             spectra={spectra}
@@ -966,14 +1346,19 @@ export function CalibrationPage({ spectra, onClose }: Props) {
           />
         )}
         {step === 3 && results && (
-          <Step3Results results={results} yLabel={displayYLabel} spectra={spectra} />
+          <Step3Results
+            results={results}
+            yLabel={displayYLabel}
+            spectra={spectra}
+            allModelResults={allModelResults}
+          />
         )}
       </div>
 
       {/* Footer */}
       <div className="flex-shrink-0 border-t border-slate-200 px-5 py-3 flex items-center justify-between bg-white">
         <div>
-          {step > 1 && (
+          {step > 1 && !running && (
             <button
               onClick={() => setStep(s => (s - 1) as 1 | 2 | 3)}
               className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
@@ -983,9 +1368,9 @@ export function CalibrationPage({ spectra, onClose }: Props) {
           )}
         </div>
         <div className="flex items-center gap-3">
-          {step === 3 && results && (
+          {step === 3 && results && !running && (
             <button
-              onClick={() => { setResults(null); setStep(2); }}
+              onClick={() => { setResults(null); setAllModelResults(null); setStep(2); }}
               className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
             >
               Reconfigure
@@ -1013,7 +1398,7 @@ export function CalibrationPage({ spectra, onClose }: Props) {
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
                 </svg>
               )}
-              {running ? 'Running…' : 'Run Model →'}
+              {running ? 'Running…' : `Run Model${effectiveConfig.compareAll ? 's →' : ' →'}`}
             </button>
           )}
         </div>

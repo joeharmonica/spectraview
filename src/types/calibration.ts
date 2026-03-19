@@ -20,6 +20,7 @@ export interface ModelConfig {
   lambda: number;        // Ridge / Lasso
   autoScale: boolean;
   cvFolds: number;       // 0 = no CV
+  compareAll: boolean;   // run all 5 models and include comparison table
 }
 
 export const DEFAULT_CONFIG: ModelConfig = {
@@ -29,6 +30,7 @@ export const DEFAULT_CONFIG: ModelConfig = {
   lambda: 1,
   autoScale: true,
   cvFolds: 5,
+  compareAll: false,
 };
 
 export interface PredictionRow {
@@ -45,6 +47,16 @@ export interface CoefficientRow {
   value: number;
 }
 
+export interface ModelComparisonRow {
+  model: ModelType;
+  label: string;
+  trainR2: number;
+  trainRMSE: number;
+  testR2: number | null;
+  testRMSE: number | null;
+  cvRMSE: number | null;
+}
+
 export interface CalibrationResults {
   model: ModelType;
   nComponents: number;
@@ -58,4 +70,8 @@ export interface CalibrationResults {
   predictions: PredictionRow[];
   coefficients: CoefficientRow[];
   featureLabels: string[];
+  /** Auto-generated human-readable quality summary */
+  summary: string;
+  /** Populated when config.compareAll = true */
+  comparison: ModelComparisonRow[] | null;
 }
