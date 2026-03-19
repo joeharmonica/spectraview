@@ -1,7 +1,23 @@
-import { useMemo } from 'react';
-import Plot from 'react-plotly.js';
-import type { Data, Layout, Config, Annotations } from 'plotly.js';
-import type { Spectrum, ViewMode } from '../types/spectrum';
+import { useMemo, useState, useCallback } from 'react';
+import _PlotImport from 'react-plotly.js';
+import type { Data, Layout, Config, Annotations, Shape } from 'plotly.js';
+
+// Vite 8 (rolldown) pre-bundles react-plotly.js via __commonJSMin and does
+//   export default require_react_plotly()
+// which returns the CJS exports *object* {__esModule:true, default: PlotComponent},
+// not the component itself. Unwrap .default to get the actual React class.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const Plot = ((_PlotImport as any).default ?? _PlotImport) as typeof _PlotImport;
+
+if (typeof Plot !== 'function') {
+  console.error(
+    '[SpectraView][ChartWorkspace] Plot component is invalid after CJS unwrap.',
+    'Got:', typeof Plot, Plot,
+    '\nExpected a React class/function from react-plotly.js.',
+  );
+}
+
+import type { Spectrum, ViewMode, HighlightedPeak } from '../types/spectrum';
 import { applyProcessing } from '../lib/processing';
 
 interface Props {
@@ -9,11 +25,20 @@ interface Props {
   viewMode: ViewMode;
   stackOffset: number;
   showLabels: boolean;
+  highlightedPeaks?: HighlightedPeak[];
+  /** Drag mode controlled by parent (Toolbar) */
+  dragMode: 'zoom' | 'pan';
+  /** Called once the Plotly graphDiv is ready — parent uses it for reset/download */
+  onPlotInit: (div: HTMLElement) => void;
 }
 
-export function ChartWorkspace({ spectra, viewMode, stackOffset, showLabels }: Props) {
-  // Memoize expensive processing (baseline, smoothing, normalization) — only reruns when
-  // spectrum data or processing options actually change, not on every parent render.
+export function ChartWorkspace({
+  spectra, viewMode, stackOffset, showLabels,
+  highlightedPeaks = [], dragMode, onPlotInit,
+}: Props) {
+  const [hoveredEx, setHoveredEx] = useState<number | null>(null);
+
+  // Memoize expensive processing — only reruns when spectrum data or processing options change
   const processed = useMemo(() =>
     spectra.map(s => ({
       ...s,
@@ -26,6 +51,29 @@ export function ChartWorkspace({ spectra, viewMode, stackOffset, showLabels }: P
   const { traces, annotations } = useMemo(() => {
     if (processed.length === 0) return { traces: [], annotations: [] };
 
+    if (viewMode === 'heatmap' && processed.every(s => s.format === 'rf6000_3d')) {
+      const sorted = [...processed].sort((a, b) =>
+        parseFloat(a.metadata?.excitation_nm ?? '0') - parseFloat(b.metadata?.excitation_nm ?? '0')
+      );
+      const exWavelengths = sorted.map(s => parseFloat(s.metadata?.excitation_nm ?? '0'));
+      const emWavelengths = sorted[0].wavelengths;
+      const z = sorted.map(s => s.displayIntensities);
+
+      return {
+        traces: [{
+          type: 'heatmap',
+          x: emWavelengths,
+          y: exWavelengths,
+          z,
+          colorscale: 'Viridis',
+          showscale: true,
+          colorbar: { title: { text: 'Intensity', side: 'right' }, thickness: 15 },
+          hovertemplate: 'Em: %{x:.1f} nm<br>Ex: %{y:.1f} nm<br>I: %{z:.4f}<extra></extra>',
+        } as Data],
+        annotations: [],
+      };
+    }
+
     const yMaxAll = processed.reduce((max, s) => {
       const sMax = s.displayIntensities.reduce((a, b) => (b > a ? b : a), -Infinity);
       return sMax > max ? sMax : max;
@@ -33,20 +81,22 @@ export function ChartWorkspace({ spectra, viewMode, stackOffset, showLabels }: P
 
     const t: Data[] = processed.map((s, i) => {
       const yOffset = viewMode === 'stacked' ? i * stackOffset * yMaxAll : 0;
+      const displayName = s.label || s.name;
       return {
         x: s.wavelengths,
         y: s.displayIntensities.map(v => v + yOffset),
         type: 'scatter',
         mode: 'lines',
-        name: s.name,
+        name: displayName,
         line: { color: s.color, width: 1.5 },
-        hovertemplate: `<b>${s.name}</b><br>λ: %{x:.1f} nm<br>I: %{y:.4f}<extra></extra>`,
+        hovertemplate: `<b>${displayName}</b><br>λ: %{x:.1f} nm<br>I: %{y:.4f}<extra></extra>`,
       } as Data;
     });
 
     const ann: Partial<Annotations>[] = showLabels
       ? processed.map((s, i) => {
           const yOffset = viewMode === 'stacked' ? i * stackOffset * yMaxAll : 0;
+          const displayName = s.label || s.name;
           let peakIdx = 0;
           let peakVal = -Infinity;
           s.displayIntensities.forEach((v, idx) => {
@@ -57,7 +107,7 @@ export function ChartWorkspace({ spectra, viewMode, stackOffset, showLabels }: P
           return {
             x: peakX, y: peakY,
             xref: 'x' as const, yref: 'y' as const,
-            text: `<b>${s.name}</b><br>${peakX.toFixed(1)} nm`,
+            text: `<b>${displayName}</b><br>${peakX.toFixed(1)} nm`,
             showarrow: true, arrowhead: 2, arrowsize: 0.8, arrowwidth: 1,
             arrowcolor: s.color,
             font: { size: 10, color: s.color },
@@ -70,6 +120,35 @@ export function ChartWorkspace({ spectra, viewMode, stackOffset, showLabels }: P
 
     return { traces: t, annotations: ann };
   }, [processed, viewMode, stackOffset, showLabels]);
+
+  // Find the closest emission slice for the hovered excitation wavelength
+  const hoveredSlice = useMemo(() => {
+    if (viewMode !== 'heatmap' || hoveredEx === null || processed.length === 0) return null;
+    const sorted = [...processed].sort((a, b) =>
+      parseFloat(a.metadata?.excitation_nm ?? '0') - parseFloat(b.metadata?.excitation_nm ?? '0')
+    );
+    const slice = sorted.reduce((best, s) => {
+      const d = Math.abs(parseFloat(s.metadata?.excitation_nm ?? '0') - hoveredEx);
+      const bd = Math.abs(parseFloat(best.metadata?.excitation_nm ?? '0') - hoveredEx);
+      return d < bd ? s : best;
+    });
+    return {
+      exWl: parseFloat(slice.metadata?.excitation_nm ?? '0'),
+      wavelengths: slice.wavelengths,
+      intensities: slice.displayIntensities,
+    };
+  }, [hoveredEx, processed, viewMode]);
+
+  const handleHover = useCallback((event: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+    if (viewMode === 'heatmap' && event.points?.length > 0) {
+      const exWl = event.points[0].y as number;
+      setHoveredEx(prev => prev === exWl ? prev : exWl);
+    }
+  }, [viewMode]);
+
+  const handleUnhover = useCallback(() => {
+    if (viewMode === 'heatmap') setHoveredEx(null);
+  }, [viewMode]);
 
   if (spectra.length === 0) {
     return (
@@ -84,18 +163,20 @@ export function ChartWorkspace({ spectra, viewMode, stackOffset, showLabels }: P
     margin: { t: 20, r: 20, b: 60, l: 70 },
     paper_bgcolor: 'white',
     plot_bgcolor: '#f8fafc',
+    dragmode: dragMode as Layout['dragmode'],
     xaxis: {
-      title: { text: 'Wavelength (nm)', font: { size: 12 } },
+      title: { text: viewMode === 'heatmap' ? 'Emission Wavelength (nm)' : 'Wavelength (nm)', font: { size: 12 } },
       gridcolor: '#e2e8f0',
       showgrid: true,
       zeroline: false,
     },
     yaxis: {
-      title: { text: 'Intensity', font: { size: 12 } },
+      title: { text: viewMode === 'heatmap' ? 'Excitation Wavelength (nm)' : 'Intensity', font: { size: 12 } },
       gridcolor: '#e2e8f0',
       showgrid: true,
       zeroline: false,
     },
+    showlegend: viewMode !== 'heatmap',
     legend: {
       x: 1.01, xanchor: 'left', y: 1,
       bgcolor: 'rgba(255,255,255,0.8)',
@@ -103,13 +184,37 @@ export function ChartWorkspace({ spectra, viewMode, stackOffset, showLabels }: P
       font: { size: 11 },
     },
     hovermode: 'closest',
-    annotations,
+    annotations: [
+      ...annotations,
+      ...highlightedPeaks.map(p => ({
+        x: p.wavelength,
+        y: 1,
+        xref: 'x' as const,
+        yref: 'paper' as const,
+        text: `${p.wavelength.toFixed(1)} nm`,
+        showarrow: false,
+        font: { size: 9, color: p.color },
+        xanchor: 'center' as const,
+        yanchor: 'bottom' as const,
+        bgcolor: 'rgba(255,255,255,0.85)',
+        bordercolor: p.color,
+        borderwidth: 1,
+        borderpad: 2,
+      } as Partial<Annotations>)),
+    ],
+    shapes: highlightedPeaks.map(p => ({
+      type: 'line' as const,
+      x0: p.wavelength, x1: p.wavelength,
+      y0: 0, y1: 1,
+      yref: 'paper' as const,
+      line: { color: p.color, width: 1.5, dash: 'dot' as const },
+    } as Partial<Shape>)),
   };
 
   const config: Partial<Config> = {
     scrollZoom: true,
-    displayModeBar: true,
-    modeBarButtonsToRemove: ['select2d', 'lasso2d', 'autoScale2d'],
+    displayModeBar: false,
+    displaylogo: false,
     responsive: true,
     toImageButtonOptions: {
       format: 'png',
@@ -121,16 +226,72 @@ export function ChartWorkspace({ spectra, viewMode, stackOffset, showLabels }: P
   };
 
   return (
-    <div className="flex-1 min-h-0 relative">
-      <div className="absolute inset-0">
-        <Plot
-          data={traces}
-          layout={layout}
-          config={config}
-          style={{ width: '100%', height: '100%' }}
-          useResizeHandler
-        />
+    <div className="flex-1 min-h-0 flex flex-col">
+      {/* Main chart area */}
+      <div className="flex-1 relative min-h-0">
+        <div className="absolute inset-0">
+          <Plot
+            data={traces}
+            layout={layout}
+            config={config}
+            style={{ width: '100%', height: '100%' }}
+            useResizeHandler
+            onInitialized={(_, div) => onPlotInit(div)}
+            onHover={handleHover}
+            onUnhover={handleUnhover}
+          />
+        </div>
       </div>
+
+      {/* Heatmap hover preview — shows the emission slice at the hovered excitation row */}
+      {viewMode === 'heatmap' && (
+        <div className="flex-shrink-0 h-28 border-t border-slate-200 bg-white px-4 py-2">
+          {hoveredSlice ? (
+            <div className="h-full flex flex-col gap-0.5">
+              <span className="text-xs text-slate-400 flex-shrink-0">
+                Emission at Ex = <span className="font-medium text-slate-600">{hoveredSlice.exWl.toFixed(1)} nm</span>
+              </span>
+              <svg className="flex-1 w-full overflow-visible" viewBox="0 0 100 32" preserveAspectRatio="none">
+                <EmissionSlicePath
+                  wavelengths={hoveredSlice.wavelengths}
+                  intensities={hoveredSlice.intensities}
+                />
+              </svg>
+            </div>
+          ) : (
+            <div className="h-full flex items-center justify-center text-xs text-slate-300 select-none">
+              Hover over the heatmap to preview the emission slice
+            </div>
+          )}
+        </div>
+      )}
     </div>
+  );
+}
+
+/** Renders a single emission spectrum as a normalised SVG polyline (viewBox 100×32). */
+function EmissionSlicePath({ wavelengths, intensities }: { wavelengths: number[]; intensities: number[] }) {
+  if (wavelengths.length < 2) return null;
+  const minX = wavelengths[0];
+  const maxX = wavelengths[wavelengths.length - 1];
+  const maxY = Math.max(...intensities);
+  const minY = Math.min(0, Math.min(...intensities));
+  const rangeX = maxX - minX || 1;
+  const rangeY = maxY - minY || 1;
+
+  const points = wavelengths.map((wl, i) => {
+    const px = ((wl - minX) / rangeX) * 100;
+    const py = 30 - ((intensities[i] - minY) / rangeY) * 28;
+    return `${px.toFixed(2)},${py.toFixed(2)}`;
+  }).join(' ');
+
+  return (
+    <>
+      <line x1="0" y1="30" x2="100" y2="30" stroke="#e2e8f0" strokeWidth="0.4" vectorEffect="non-scaling-stroke" />
+      <polyline points={points} fill="none" stroke="#6366f1" strokeWidth="0.8"
+        vectorEffect="non-scaling-stroke" strokeLinejoin="round" />
+      <text x="0.5" y="31.5" fontSize="2.5" fill="#94a3b8">{minX.toFixed(0)} nm</text>
+      <text x="99.5" y="31.5" fontSize="2.5" fill="#94a3b8" textAnchor="end">{maxX.toFixed(0)} nm</text>
+    </>
   );
 }

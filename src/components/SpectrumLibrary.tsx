@@ -19,13 +19,15 @@ interface Props {
   onAddMore: () => void;
   onRename: (id: string, name: string) => void;
   onColorChange: (id: string, color: string) => void;
+  onLabelChange: (id: string, label: string) => void;
+  onCollapse: () => void;
 }
 
 export function SpectrumLibrary({
   spectra, selectedIds,
   onToggleSelect, onSelectAll, onSelectNone, onInvertSelect,
   onRemove, onRemoveSelected, onClearAll, onDuplicate,
-  onAddMore, onRename, onColorChange,
+  onAddMore, onRename, onColorChange, onLabelChange, onCollapse,
 }: Props) {
   const [search, setSearch] = useState('');
   const [formatFilter, setFormatFilter] = useState<FormatFilter>('all');
@@ -33,6 +35,8 @@ export function SpectrumLibrary({
   const [colorPickerId, setColorPickerId] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
+  const [labelingId, setLabelingId] = useState<string | null>(null);
+  const [labelValue, setLabelValue] = useState('');
 
   const presentFormats = useMemo(() => [...new Set(spectra.map(s => s.format))], [spectra]);
 
@@ -69,14 +73,35 @@ export function SpectrumLibrary({
     setRenamingId(null);
   };
 
+  const startLabel = (s: Spectrum) => {
+    setRenamingId(null); // close any open rename
+    setLabelingId(s.id);
+    setLabelValue(s.label ?? '');
+  };
+
+  const commitLabel = (id: string) => {
+    onLabelChange(id, labelValue.trim());
+    setLabelingId(null);
+  };
+
   return (
-    <aside className="w-72 flex-shrink-0 bg-white border-r border-slate-200 flex flex-col">
+    <aside id="tutorial-library" className="w-full h-full bg-white border-r border-slate-200 flex flex-col">
       {/* Header */}
-      <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-slate-700">
+      <div className="px-3 py-2.5 border-b border-slate-200 flex items-center gap-2">
+        {/* Collapse button */}
+        <button
+          onClick={onCollapse}
+          title="Collapse library panel"
+          className="text-slate-400 hover:text-slate-600 transition-colors flex-shrink-0"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
+        </button>
+        <h2 className="text-sm font-semibold text-slate-700 flex-1 truncate">
           Library <span className="text-slate-400 font-normal">({spectra.length})</span>
         </h2>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-shrink-0">
           {spectra.length > 0 && (
             <button
               onClick={onClearAll}
@@ -183,6 +208,8 @@ export function SpectrumLibrary({
                 isSelected={selectedIds.has(spectrum.id)}
                 isRenaming={renamingId === spectrum.id}
                 renameValue={renameValue}
+                isLabeling={labelingId === spectrum.id}
+                labelValue={labelValue}
                 showColorPicker={colorPickerId === spectrum.id}
                 onToggle={() => onToggleSelect(spectrum.id)}
                 onRemove={() => onRemove(spectrum.id)}
@@ -193,6 +220,9 @@ export function SpectrumLibrary({
                 onNameClick={() => startRename(spectrum)}
                 onRenameChange={setRenameValue}
                 onRenameCommit={() => commitRename(spectrum.id)}
+                onLabelClick={() => startLabel(spectrum)}
+                onLabelChange={setLabelValue}
+                onLabelCommit={() => commitLabel(spectrum.id)}
               />
             ))}
           </ul>
@@ -203,14 +233,16 @@ export function SpectrumLibrary({
 }
 
 function SpectrumRow({
-  spectrum, isSelected, isRenaming, renameValue, showColorPicker,
+  spectrum, isSelected, isRenaming, renameValue, isLabeling, labelValue, showColorPicker,
   onToggle, onRemove, onDuplicate, onColorSwatchClick, onColorChange, onColorPickerClose,
-  onNameClick, onRenameChange, onRenameCommit,
+  onNameClick, onRenameChange, onRenameCommit, onLabelClick, onLabelChange, onLabelCommit,
 }: {
   spectrum: Spectrum;
   isSelected: boolean;
   isRenaming: boolean;
   renameValue: string;
+  isLabeling: boolean;
+  labelValue: string;
   showColorPicker: boolean;
   onToggle: () => void;
   onRemove: () => void;
@@ -221,6 +253,9 @@ function SpectrumRow({
   onNameClick: () => void;
   onRenameChange: (v: string) => void;
   onRenameCommit: () => void;
+  onLabelClick: () => void;
+  onLabelChange: (v: string) => void;
+  onLabelCommit: () => void;
 }) {
   const renameRef = useRef<HTMLInputElement>(null);
   const [metaOpen, setMetaOpen] = useState(false);
@@ -286,6 +321,38 @@ function SpectrumRow({
         <p className="text-xs text-slate-400 truncate">
           {spectrum.filename}
         </p>
+        {/* Chart label pill — always visible for discoverability */}
+        {isLabeling ? (
+          <input
+            autoFocus
+            type="text"
+            value={labelValue}
+            placeholder="Chart label (blank = use name)"
+            onChange={e => onLabelChange(e.target.value)}
+            onBlur={onLabelCommit}
+            onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') onLabelCommit(); }}
+            onClick={e => e.stopPropagation()}
+            className="w-full text-xs border border-blue-300 rounded px-1.5 py-0.5 focus:outline-none mt-1"
+          />
+        ) : spectrum.label ? (
+          <button
+            onClick={e => { e.stopPropagation(); onLabelClick(); }}
+            title="Chart label — click to edit"
+            className="inline-flex items-center max-w-full px-2 py-0.5 rounded-full text-white text-xs font-medium mt-1 truncate hover:opacity-80 transition-opacity"
+            style={{ backgroundColor: spectrum.color }}
+          >
+            <span className="truncate">{spectrum.label}</span>
+          </button>
+        ) : (
+          <button
+            onClick={e => { e.stopPropagation(); onLabelClick(); }}
+            title="Add a custom label shown on the chart"
+            className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-xs font-medium mt-1 border border-dashed text-slate-400 hover:text-slate-600 transition-colors"
+            style={{ borderColor: spectrum.color }}
+          >
+            + label
+          </button>
+        )}
         {spectrum.wavelengths.length > 0 && (
           <p className="text-xs text-slate-300 hidden group-hover:block">
             {spectrum.wavelengths[0]?.toFixed(0)}–{spectrum.wavelengths[spectrum.wavelengths.length - 1]?.toFixed(0)} nm

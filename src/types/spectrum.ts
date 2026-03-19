@@ -1,6 +1,6 @@
 export type SpectrumFormat = 'cary3500' | 'rf6000_2d' | 'rf6000_3d' | 'r1f' | 'unknown';
 
-export type ViewMode = 'overlap' | 'stacked';
+export type ViewMode = 'overlap' | 'stacked' | 'heatmap';
 
 export interface ProcessingOptions {
   normalize: 'max' | 'area' | { wavelength: number } | null;
@@ -27,6 +27,19 @@ export interface Spectrum {
   color: string;
   processing: ProcessingOptions;
   tags?: string[];
+  /** User-defined chart label. When set, shown on the chart instead of `name`. */
+  label?: string;
+}
+
+/** A peak selected by the user in the Peak Table to be highlighted on the chart. */
+export interface HighlightedPeak {
+  /** Stable key: `${spectrumId}_${wavelength.toFixed(3)}` */
+  key: string;
+  spectrumId: string;
+  wavelength: number;
+  color: string;
+  /** Display name used in the annotation */
+  spectrumLabel: string;
 }
 
 /** Returned by parseFile when format is unknown and user needs to map columns */

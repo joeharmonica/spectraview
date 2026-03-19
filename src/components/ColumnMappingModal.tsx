@@ -95,7 +95,7 @@ export function ColumnMappingModal({ request, onConfirm, onCancel }: Props) {
         </div>
 
         {/* Controls */}
-        <div className="px-6 py-3 border-b border-slate-100 flex-shrink-0 grid grid-cols-3 gap-4">
+        <div className="px-4 sm:px-6 py-3 border-b border-slate-100 flex-shrink-0 grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
           <div>
             <label className="text-xs font-medium text-slate-500 block mb-1">
               <span className="inline-block w-2.5 h-2.5 rounded-full bg-blue-400 mr-1.5" />
@@ -145,7 +145,7 @@ export function ColumnMappingModal({ request, onConfirm, onCancel }: Props) {
         </div>
 
         {/* Two-panel preview */}
-        <div className="flex-1 min-h-0 flex overflow-hidden">
+        <div className="flex-1 min-h-0 flex flex-col sm:flex-row overflow-hidden">
 
           {/* Left: raw rows table */}
           <div className="flex-1 flex flex-col min-w-0 overflow-hidden border-r border-slate-100">
@@ -193,7 +193,7 @@ export function ColumnMappingModal({ request, onConfirm, onCancel }: Props) {
           </div>
 
           {/* Right: mapped preview */}
-          <div className="w-60 flex-shrink-0 flex flex-col">
+          <div className="w-full sm:w-60 flex-shrink-0 flex flex-col border-t sm:border-t-0 sm:border-l border-slate-100">
             <p className="px-4 py-2 text-xs text-slate-400 bg-slate-50 border-b border-slate-100 flex-shrink-0">
               Mapped preview
               {totalValidPoints > 0 && (
@@ -239,7 +239,7 @@ export function ColumnMappingModal({ request, onConfirm, onCancel }: Props) {
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-3 border-t border-slate-100 flex-shrink-0 flex items-center justify-between">
+        <div className="px-4 sm:px-6 py-3 border-t border-slate-100 flex-shrink-0 flex items-center justify-between flex-wrap gap-2">
           {error ? (
             <p className="text-xs text-red-500">{error}</p>
           ) : (
