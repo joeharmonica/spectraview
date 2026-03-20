@@ -51,5 +51,6 @@ export interface ColumnMappingRequest {
   /** Detected number of leading header rows (non-numeric) */
   suggestedHeaderRows: number;
   suggestedWavCol: number;
-  suggestedIntCol: number;
+  /** All non-wavelength numeric columns — each becomes one spectrum */
+  suggestedIntCols: number[];
 }

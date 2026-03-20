@@ -93,7 +93,7 @@ function buildMappingRequest(file: File, rows: string[][]): ColumnMappingRequest
 
   // Best guess for wavelength / intensity columns (first two all-numeric columns in data rows)
   let suggestedWavCol = 0;
-  let suggestedIntCol = 1;
+  const suggestedIntCols: number[] = [];
   if (dataRows.length > 0) {
     const numericCols: number[] = [];
     for (let col = 0; col < maxCols; col++) {
@@ -104,45 +104,58 @@ function buildMappingRequest(file: File, rows: string[][]): ColumnMappingRequest
       if (allNumeric) numericCols.push(col);
     }
     if (numericCols.length >= 1) suggestedWavCol = numericCols[0]!;
-    if (numericCols.length >= 2) suggestedIntCol = numericCols[1]!;
+    // All numeric columns except the wavelength column are candidate intensity columns
+    suggestedIntCols.push(...numericCols.filter(c => c !== suggestedWavCol));
   }
 
-  return { file, filename: file.name, rawRows, suggestedHeaderRows, suggestedWavCol, suggestedIntCol };
+  return { file, filename: file.name, rawRows, suggestedHeaderRows, suggestedWavCol, suggestedIntCols };
 }
 
-/** Parse a file with explicit column mapping chosen by the user */
+/** Parse a file with explicit column mapping chosen by the user.
+ *  Each entry in intCols becomes one Spectrum; column header (if present) is used as the spectrum name.
+ */
 export function parseFileWithMapping(
   rows: string[][],
   filename: string,
   wavCol: number,
-  intCol: number,
+  intCols: number[],
   headerRows: number,
 ): Spectrum[] {
+  const baseName = filename.replace(/\.[^.]+$/, '');
+  const headerRow = headerRows > 0 ? (rows[headerRows - 1] ?? []) : [];
   const dataRows = rows.slice(headerRows);
-  const wavelengths: number[] = [];
-  const intensities: number[] = [];
 
-  for (const row of dataRows) {
-    const w = parseFloat((row[wavCol] ?? '').trim());
-    const i = parseFloat((row[intCol] ?? '').trim());
-    if (!isNaN(w) && !isNaN(i)) {
-      wavelengths.push(w);
-      intensities.push(i);
+  const spectra: Spectrum[] = [];
+  for (const intCol of intCols) {
+    const wavelengths: number[] = [];
+    const intensities: number[] = [];
+    for (const row of dataRows) {
+      const w = parseFloat((row[wavCol] ?? '').trim());
+      const i = parseFloat((row[intCol] ?? '').trim());
+      if (!isNaN(w) && !isNaN(i)) {
+        wavelengths.push(w);
+        intensities.push(i);
+      }
     }
+    if (wavelengths.length === 0) continue;
+
+    const colLabel = headerRow[intCol]?.trim() ?? '';
+    const name = colLabel
+      ? colLabel
+      : intCols.length === 1 ? baseName : `${baseName} – Col ${intCol + 1}`;
+
+    spectra.push({
+      id: crypto.randomUUID(),
+      color: nextColor(),
+      name,
+      filename,
+      format: 'unknown',
+      wavelengths,
+      intensities,
+      processing: { ...DEFAULT_PROCESSING },
+    });
   }
-
-  if (wavelengths.length === 0) return [];
-
-  return [{
-    id: crypto.randomUUID(),
-    color: nextColor(),
-    name: filename.replace(/\.[^.]+$/, ''),
-    filename,
-    format: 'unknown',
-    wavelengths,
-    intensities,
-    processing: { ...DEFAULT_PROCESSING },
-  }];
+  return spectra;
 }
 
 function finalize(partials: Omit<Spectrum, 'id' | 'color'>[]): Spectrum[] {

@@ -55,7 +55,7 @@ const STEPS: Step[] = [
   {
     targetId: null,
     title: 'Calibration & Modelling',
-    body: 'Build quantitative spectral models to predict concentration, pH, or any measurable property. Click the Calibration button to open the 3-step wizard: (1) Define Variables — choose spectral features and enter known Y values. (2) Configure Model — select algorithm, tune parameters, and optionally enable "Compare all models". (3) Review Results — metrics, plots, and downloadable report.',
+    body: 'Build quantitative spectral models to predict concentration, pH, or any measurable property. Click the Calibration button to open the 3-step wizard: (1) Define Variables — choose spectral features and enter known Y values. (2) Configure Model — pick one or more algorithms from the dropdown, tune parameters. (3) Review Results — metrics, plots, and downloadable report.',
   },
   {
     targetId: null,
@@ -65,7 +65,7 @@ const STEPS: Step[] = [
   {
     targetId: null,
     title: 'Model Results & Comparison',
-    body: 'When "Compare all models" is enabled, models run sequentially (PLS-R → PCR → MLR → Ridge → Lasso) with a live progress bar. Results open with an Overview tab showing the ranked comparison table and R² chart. Each model gets its own tab with full scatter plot, residuals, coefficient chart, and predictions. Each section has a banner explaining what to look for. Download a full HTML report covering all models.',
+    body: 'Select two or more models in the dropdown to run a comparison. Models run sequentially with a live progress bar. Results open with an Overview tab showing the ranked comparison table (★ best = highest test R²; ← your pick = your first selection) and R² chart. Each model gets its own tab with full results. Download a full HTML report covering all models.',
   },
   {
     targetId: null,

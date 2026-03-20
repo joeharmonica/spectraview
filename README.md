@@ -16,7 +16,7 @@ Built with React 19, TypeScript 5.8, Vite 8, Plotly.js, Tailwind CSS v4, and Dex
 | Shimadzu RF-6000 2D | Auto | Large metadata header block + Wavelength/Intensity column pairs |
 | Shimadzu RF-6000 3D EEM | Auto | Excitation–emission matrix; produces one emission spectrum per excitation wavelength |
 | LabSolutions R1F | Auto | JSON-embedded spectrum data |
-| Custom XY CSV/XLSX | Manual | Unknown formats trigger the **Column Mapping** dialog |
+| Custom XY CSV/XLSX | Manual | Unknown formats trigger the **Column Mapping** dialog; supports one wavelength column + multiple intensity columns (one spectrum per column) |
 
 - **Drag-and-drop** or click **+ Add** in the library sidebar to load `.csv` and `.xlsx` files
 - Multiple files can be imported simultaneously
@@ -139,26 +139,28 @@ Assign a known reference value (Y) to each spectrum. Spectra with no value are e
 
 #### Step 2 — Configure Model
 
+**Models to run** — a multi-select dropdown lets you choose any combination of the five algorithms. Select one model to run it individually; select two or more to run them sequentially and generate a ranked comparison.
+
 | Setting | Options |
 |---------|---------|
-| **Algorithm** | PLS-R · PCR · MLR · Ridge (L2) · Lasso (L1) |
-| **Components** | Number of latent variables for PLS-R / PCR; LOOCV chart (enlarged) guides selection |
-| **λ (lambda)** | Regularisation strength for Ridge / Lasso |
+| **Models** | PLS-R · PCR · MLR · Ridge (L2) · Lasso (L1) — any subset, or all five |
+| **Components** | Number of latent variables for PLS-R / PCR; LOOCV chart guides selection (shown when PLS-R or PCR is selected) |
+| **λ (lambda)** | Regularisation strength for Ridge / Lasso (shown when Ridge or Lasso is selected) |
 | **Auto-scale** | Zero-mean, unit-variance standardisation (recommended) |
 | **CV folds** | k-fold cross-validation (0 = off) |
-| **Compare all models** | Located in the Model section (not Parameters). Runs PLS-R, PCR, MLR, Ridge, and Lasso **sequentially** — a live progress bar shows the current model and percentage. Results open with tabbed view. |
 
 #### Step 3 — Review Results
 
-**Single model mode:**
+**Single model (one model selected):**
 - **Summary banner** — auto-generated natural-language assessment of fit quality, overfitting risk (train–test R² gap > 0.15), and top influential wavelengths. Colour-coded: green (R² ≥ 0.90), amber (0.70–0.89), red (< 0.70).
 - **Metric cards** — Train R², RMSE, MAE; Test R², RMSE, MAE (when test split exists); CV RMSE (when cross-validation enabled). Univariate mode additionally shows **Pearson *r*** and **Sensitivity (slope)**.
 - **Section banners** — each chart section (Scatter, Residuals, Coefficients, Predictions) has a contextual banner explaining what to look for.
 - **Downloads** — Results CSV · Coefficients CSV · HTML Report.
 
-**Compare all models mode:**
-- **Overview tab** — comparison summary banner, ranked comparison table (click a row to jump to that model's tab), and R² bar chart. ★ marks the best model on each tab button.
-- **Per-model tabs** (PLS-R · PCR · MLR · Ridge · Lasso) — each tab shows the full individual results: summary banner, metric cards, scatter plot, residuals, coefficient chart, and predictions table with section banners throughout.
+**Comparison mode (two or more models selected):**
+- Models run sequentially with a live progress bar showing the current model and percentage.
+- **Overview tab** — ranked comparison table (click a row to jump to that model's tab) and R² bar chart. ★ marks the best model ranked by test R² (or train R² if no test split). ← your pick marks the first model you selected when it is not the top-ranked.
+- **Per-model tabs** — each tab shows full individual results: summary banner, metric cards, scatter plot, residuals, coefficient chart, and predictions table.
 - **HTML Report** — covers all models: comparison table with anchor links + a dedicated metrics and predictions section per model.
 
 ---

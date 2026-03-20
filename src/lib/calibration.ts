@@ -5,6 +5,15 @@ import type {
 } from '../types/calibration';
 import { applyProcessing, findPeaks } from './processing';
 
+// ─── Shared model name maps ─────────────────────────────────────────────────────
+
+export const MODEL_LABELS: Record<ModelType, string> = {
+  pls: 'PLS-R', pcr: 'PCR', mlr: 'MLR', ridge: 'Ridge', lasso: 'Lasso',
+};
+export const MODEL_NAMES: Record<ModelType, string> = {
+  pls: 'PLS-R (NIPALS)', pcr: 'PCR', mlr: 'MLR', ridge: 'Ridge', lasso: 'Lasso',
+};
+
 // ─── Matrix helpers ────────────────────────────────────────────────────────────
 
 function transpose(A: number[][]): number[][] {
@@ -613,9 +622,6 @@ export function runCalibration(
   // Comparison: run all models with same features/params
   let comparison: ModelComparisonRow[] | null = null;
   if (config.compareAll) {
-    const MODEL_LABELS: Record<ModelType, string> = {
-      pls: 'PLS-R', pcr: 'PCR', mlr: 'MLR', ridge: 'Ridge', lasso: 'Lasso',
-    };
     const allModels: ModelType[] = ['pls', 'pcr', 'mlr', 'ridge', 'lasso'];
     comparison = allModels.map(m => {
       try {
@@ -656,9 +662,6 @@ export function runCalibration(
 // ─── Human-readable summary ────────────────────────────────────────────────────
 
 export function generateSummary(results: CalibrationResults, yLabel: string): string {
-  const MODEL_NAMES: Record<ModelType, string> = {
-    pls: 'PLS-R', pcr: 'PCR', mlr: 'MLR', ridge: 'Ridge', lasso: 'Lasso',
-  };
   const trainCount = results.predictions.filter(p => p.split === 'train').length;
   const testCount  = results.predictions.filter(p => p.split === 'test').length;
   const r2 = results.trainR2;
@@ -747,13 +750,10 @@ export function coefficientsToCsv(results: CalibrationResults): string {
 export function generateReportHtml(
   results: CalibrationResults,
   yLabel: string,
-  scatterPng: string,
+  scatterPng?: string,
   allResults?: CalibrationResults[],
 ): string {
   const fmt = (v: number | null, d = 4) => v === null ? '—' : isNaN(v as number) ? 'error' : (v as number).toFixed(d);
-  const modelNames: Record<ModelType, string> = {
-    pls: 'PLS-R (NIPALS)', pcr: 'PCR', mlr: 'MLR', ridge: 'Ridge', lasso: 'Lasso',
-  };
 
   const summary = generateSummary(results, yLabel);
 
@@ -766,7 +766,7 @@ export function generateReportHtml(
 
   const comparisonSection = results.comparison && results.comparison.length > 0 ? `
 <h2>Model Comparison</h2>
-<p style="color:#64748b;font-size:14px">All models trained with the same features and evaluated on the same data. Best result highlighted. Click any model heading below to jump to its detailed results.</p>
+<p style="color:#64748b;font-size:14px">All models trained with identical features and parameters. <strong>★ best</strong> = ranked 1st by ${results.comparison[0]!.testR2 !== null ? 'test R²' : 'train R²'} (highest = best). <strong>← your pick</strong> = the model configured in Step 2 when this report was generated. Click any model name to jump to its detailed results.</p>
 <table>
   <thead><tr>
     <th>Model</th><th>Train R²</th><th>Train RMSE</th>
@@ -775,10 +775,10 @@ export function generateReportHtml(
   </tr></thead>
   <tbody>
     ${results.comparison.map((r, i) => {
-      const isBest = i === 0;
+      const isBest = i === 0 && !isNaN(r.trainR2);
       const isCurrent = r.model === results.model;
       return `<tr style="${isBest ? 'background:#eff6ff;font-weight:600;' : ''}${isCurrent ? 'outline:2px solid #3b82f6;' : ''}">
-        <td><a href="#model-${r.model}" style="color:inherit;text-decoration:none">${r.label}${isBest ? ' <span style="color:#3b82f6;font-size:11px">★ best</span>' : ''}${isCurrent && !isBest ? ' <span style="color:#64748b;font-size:11px">← selected</span>' : ''}</a></td>
+        <td><a href="#model-${r.model}" style="color:inherit;text-decoration:none">${r.label}${isBest ? ' <span style="color:#3b82f6;font-size:11px">★ best</span>' : ''}${isCurrent && !isBest ? ' <span style="color:#64748b;font-size:11px">← your pick</span>' : ''}</a></td>
         <td>${fmt(r.trainR2)}</td>
         <td>${fmt(r.trainRMSE)}</td>
         ${r.testR2 !== null ? `<td>${fmt(r.testR2)}</td><td>${fmt(r.testRMSE)}</td>` : ''}
@@ -792,7 +792,7 @@ export function generateReportHtml(
   const allModelsSection = allResults && allResults.length > 1 ? allResults.map(r => {
     const rSummary = generateSummary(r, yLabel);
     const isUniR = r.featureLabels.length === 1;
-    const slopeR = isUniR ? (r.coefficients[0]?.value ?? null) : null;
+    const slopeR = isUniR && r.model !== 'pcr' ? (r.coefficients[0]?.value ?? null) : null;
     const pearsonRR = (slopeR !== null && r.trainR2 >= 0)
       ? Math.sqrt(Math.abs(r.trainR2)) * (slopeR >= 0 ? 1 : -1) : null;
     const predRowsR = r.predictions.map(p =>
@@ -803,7 +803,7 @@ export function generateReportHtml(
     ).join('');
     return `
 <hr style="margin:40px 0;border:none;border-top:2px solid #e2e8f0">
-<h2 id="model-${r.model}">${modelNames[r.model]}</h2>
+<h2 id="model-${r.model}">${MODEL_NAMES[r.model]}</h2>
 <div class="summary-box">${rSummary}</div>
 <div class="metrics">
   <div class="metric"><div class="label">Train R²</div><div class="val">${fmt(r.trainR2)}</div></div>
@@ -845,7 +845,7 @@ img{max-width:100%;border-radius:8px;margin:12px 0}
 <body>
 <h1>SpectraView Calibration Report</h1>
 <p style="color:#64748b;font-size:13px"><strong>Generated:</strong> ${new Date().toLocaleString()} &nbsp;·&nbsp;
-  <strong>Model:</strong> <span class="badge">${modelNames[results.model]}</span> &nbsp;·&nbsp;
+  <strong>Model:</strong> <span class="badge">${MODEL_NAMES[results.model]}</span> &nbsp;·&nbsp;
   <strong>Response:</strong> ${yLabel || '(unnamed)'}
   ${['pls','pcr'].includes(results.model) ? `&nbsp;·&nbsp; <strong>Components:</strong> ${results.nComponents}` : ''}
 </p>
@@ -899,6 +899,6 @@ export function downloadCoefficientsCsv(results: CalibrationResults) {
   downloadBlob(coefficientsToCsv(results), 'calibration_coefficients.csv', 'text/csv');
 }
 
-export function downloadReport(results: CalibrationResults, yLabel: string, scatterPng: string, allResults?: CalibrationResults[]) {
+export function downloadReport(results: CalibrationResults, yLabel: string, scatterPng?: string, allResults?: CalibrationResults[]) {
   downloadBlob(generateReportHtml(results, yLabel, scatterPng, allResults), 'calibration_report.html', 'text/html');
 }

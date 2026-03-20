@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useRef } from 'react';
+import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import _PlotImport from 'react-plotly.js';
 import type { Data, Layout } from 'plotly.js';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -10,7 +10,7 @@ import { DEFAULT_CONFIG } from '../types/calibration';
 import {
   runCalibration, loocvRmseByComponent,
   downloadResultsCsv, downloadCoefficientsCsv, downloadReport,
-  extractFeatures, generateSummary,
+  extractFeatures, generateSummary, MODEL_LABELS, MODEL_NAMES,
 } from '../lib/calibration';
 
 // @ts-ignore
@@ -18,12 +18,7 @@ import * as _PlotlyRaw from 'plotly.js-dist-min';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const PlotlyLib: any = (_PlotlyRaw as any).default ?? _PlotlyRaw;
 
-const MODEL_LABELS: Record<ModelType, string> = {
-  pls: 'PLS-R', pcr: 'PCR', mlr: 'MLR', ridge: 'Ridge', lasso: 'Lasso',
-};
-const MODEL_NAMES: Record<ModelType, string> = {
-  pls: 'PLS-R (NIPALS)', pcr: 'PCR', mlr: 'MLR', ridge: 'Ridge', lasso: 'Lasso',
-};
+const fmt = (v: number | null, d = 4) => v === null ? '—' : isNaN(v) ? 'err' : v.toFixed(d);
 
 interface Props {
   spectra: Spectrum[];
@@ -398,15 +393,38 @@ function Step1Labels({
 // ─── Step 2: Model Configuration ──────────────────────────────────────────────
 
 function Step2Config({
-  spectra, labels, features, config, onChange,
+  spectra, labels, features, config, onChange, selectedModels, onModelsChange,
 }: {
   spectra: Spectrum[];
   labels: SampleLabel[];
   features: FeatureStrategy;
   config: ModelConfig;
   onChange: (c: ModelConfig) => void;
+  selectedModels: ModelType[];
+  onModelsChange: (m: ModelType[]) => void;
 }) {
   const set = (patch: Partial<ModelConfig>) => onChange({ ...config, ...patch });
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!dropdownOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node))
+        setDropdownOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [dropdownOpen]);
+
+  const toggleModel = (key: ModelType) => {
+    if (selectedModels.includes(key)) {
+      if (selectedModels.length === 1) return; // keep at least one
+      onModelsChange(selectedModels.filter(m => m !== key));
+    } else {
+      onModelsChange([...selectedModels, key]);
+    }
+  };
 
   const trainSpectra = useMemo(() => {
     const trainIds = new Set(labels.filter(l => l.split === 'train' && l.yValue !== null).map(l => l.spectrumId));
@@ -414,9 +432,13 @@ function Step2Config({
   }, [spectra, labels]);
 
   const isMultivariate = !(features.type === 'specific_wavelengths' && features.wavelengths.length <= 1);
+  const showComponents = selectedModels.includes('pls') || selectedModels.includes('pcr');
+  const showLambda = selectedModels.includes('ridge') || selectedModels.includes('lasso');
+  // Use the first pls/pcr model for LOOCV (most relevant for component tuning)
+  const loocvModel = selectedModels.find(m => m === 'pls' || m === 'pcr') ?? null;
 
   const loocvData = useMemo(() => {
-    if (config.model !== 'pls' && config.model !== 'pcr') return null;
+    if (!loocvModel) return null;
     if (trainSpectra.length < 3) return null;
     try {
       const trainLabels = labels.filter(l => l.split === 'train' && l.yValue !== null);
@@ -424,9 +446,9 @@ function Step2Config({
       const y = trainLabels.map(l => l.yValue!);
       const maxComp = Math.min(10, trainSpectra.length - 1, X[0]?.length ?? 1);
       if (maxComp < 2) return null;
-      return loocvRmseByComponent(X, y, maxComp, config.model, config.autoScale);
+      return loocvRmseByComponent(X, y, maxComp, loocvModel, config.autoScale);
     } catch { return null; }
-  }, [config.model, features, config.autoScale, trainSpectra.length, spectra, labels]);
+  }, [loocvModel, features, config.autoScale, trainSpectra.length, spectra, labels]);
 
   const maxComp = Math.max(1, Math.min(15, trainSpectra.length - 1));
 
@@ -461,58 +483,87 @@ function Step2Config({
       {/* Model selection */}
       <section>
         <div className="flex items-center gap-1 mb-3">
-          <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Model</h3>
-          <Tip text="Choose the statistical model that maps your spectral features (X) to the reference values (Y). PLS-R is the standard choice for spectroscopy." />
-        </div>
-        <div className="space-y-2">
-          {models.map(m => {
-            const disabled = m.multivariateOnly && !isMultivariate;
-            return (
-              <label
-                key={m.key}
-                className={`flex items-start gap-3 rounded-xl border-2 px-3 py-2.5 transition-colors
-                  ${config.model === m.key ? 'border-blue-400 bg-blue-50' : 'border-transparent hover:border-slate-200'}
-                  ${disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}
-              >
-                <input type="radio" name="model" value={m.key}
-                  checked={config.model === m.key}
-                  disabled={disabled}
-                  onChange={() => !disabled && set({ model: m.key })}
-                  className="mt-0.5 accent-blue-500 flex-shrink-0" />
-                <span className="min-w-0">
-                  <span className="text-sm text-slate-700 font-semibold">{m.label}</span>
-                  {m.recommended && (
-                    <span className="ml-2 text-xs bg-blue-100 text-blue-700 rounded-full px-2 py-0.5 font-medium">Recommended</span>
-                  )}
-                  {m.multivariateOnly && !isMultivariate && (
-                    <span className="ml-2 text-xs bg-slate-100 text-slate-400 rounded-full px-2 py-0.5">Requires multivariate X</span>
-                  )}
-                  <p className="text-xs text-slate-400 mt-0.5 leading-relaxed">{m.when}</p>
-                </span>
-              </label>
-            );
-          })}
+          <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Models to run</h3>
+          <Tip text="Select one or more models. With multiple models selected, all run sequentially and results appear in a ranked comparison view. PLS-R is the standard choice for spectroscopy." />
         </div>
 
-        {/* Compare all models — lives in Model section */}
-        <div className="mt-3 pt-3 border-t border-slate-100">
-          <label
-            className={`flex items-start gap-3 rounded-xl border-2 px-3 py-2.5 transition-colors cursor-pointer
-              ${config.compareAll ? 'border-violet-400 bg-violet-50' : 'border-transparent hover:border-slate-200'}`}
+        {/* Multi-select dropdown */}
+        <div ref={dropdownRef} className="relative">
+          <button
+            type="button"
+            onClick={() => setDropdownOpen(o => !o)}
+            className="w-full flex items-center justify-between gap-2 border border-slate-200 rounded-xl px-3 py-2.5 bg-white hover:border-slate-300 transition-colors text-left"
           >
-            <input type="checkbox" checked={config.compareAll}
-              onChange={e => set({ compareAll: e.target.checked })}
-              className="mt-0.5 accent-violet-500 flex-shrink-0" />
-            <span className="min-w-0">
-              <span className="text-sm text-slate-700 font-semibold flex items-center gap-2 flex-wrap">
-                Compare all models
-                <span className="text-xs bg-violet-100 text-violet-700 rounded-full px-1.5 py-0.5 font-medium">PLS · PCR · MLR · Ridge · Lasso</span>
-                <Tip text="Runs all five regression models with the same features and parameters, then ranks them by R² in the Results. Models run sequentially — results appear in individual tabs. Adds a few seconds to computation." />
-              </span>
-              <p className="text-xs text-slate-400 mt-0.5">Results include a comparison table ranking all models — useful for selecting the best method for your data.</p>
-            </span>
-          </label>
+            <div className="flex flex-wrap gap-1.5 min-w-0">
+              {selectedModels.length === 0 ? (
+                <span className="text-sm text-slate-400">Select at least one model…</span>
+              ) : selectedModels.map(key => {
+                const m = models.find(x => x.key === key)!;
+                return (
+                  <span key={key} className="inline-flex items-center gap-1 bg-blue-100 text-blue-700 text-xs px-2 py-0.5 rounded-full font-medium">
+                    {m.label}
+                    <span
+                      role="button"
+                      onClick={e => { e.stopPropagation(); toggleModel(key); }}
+                      className="hover:text-blue-900 cursor-pointer leading-none"
+                      aria-label={`Remove ${m.label}`}
+                    >×</span>
+                  </span>
+                );
+              })}
+            </div>
+            <svg className={`w-4 h-4 text-slate-400 flex-shrink-0 transition-transform ${dropdownOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+
+          {dropdownOpen && (
+            <div className="absolute z-20 top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden">
+              <div className="flex items-center justify-between px-3 py-2 border-b border-slate-100 bg-slate-50">
+                <span className="text-xs text-slate-500 font-medium">
+                  {selectedModels.length} of {models.length} selected
+                  {selectedModels.length > 1 && <span className="ml-1.5 text-violet-500">— comparison mode</span>}
+                </span>
+                <div className="flex gap-3">
+                  <button type="button" onClick={() => onModelsChange(models.filter(m => !(m.multivariateOnly && !isMultivariate)).map(m => m.key))} className="text-xs text-blue-500 hover:text-blue-700">All</button>
+                  <button type="button" onClick={() => onModelsChange([models[0]!.key])} className="text-xs text-slate-400 hover:text-slate-600">Reset</button>
+                </div>
+              </div>
+              {models.map(m => {
+                const disabled = m.multivariateOnly && !isMultivariate;
+                const checked = selectedModels.includes(m.key);
+                return (
+                  <label
+                    key={m.key}
+                    className={`flex items-start gap-3 px-3 py-2.5 border-b border-slate-50 last:border-0 transition-colors
+                      ${disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer hover:bg-slate-50'}
+                      ${checked && !disabled ? 'bg-blue-50/50' : ''}`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      disabled={disabled}
+                      onChange={() => !disabled && toggleModel(m.key)}
+                      className="mt-0.5 accent-blue-500 flex-shrink-0"
+                    />
+                    <span className="min-w-0">
+                      <span className="text-sm text-slate-700 font-semibold">{m.label}</span>
+                      {m.recommended && <span className="ml-2 text-xs bg-blue-100 text-blue-700 rounded-full px-2 py-0.5 font-medium">Recommended</span>}
+                      {m.multivariateOnly && !isMultivariate && <span className="ml-2 text-xs bg-slate-100 text-slate-400 rounded-full px-2 py-0.5">Requires multivariate X</span>}
+                      <p className="text-xs text-slate-400 mt-0.5 leading-relaxed">{m.when}</p>
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          )}
         </div>
+
+        {selectedModels.length > 1 && (
+          <p className="text-xs text-slate-400 mt-2">
+            {selectedModels.length} models will run sequentially — results include a ranked comparison table.
+          </p>
+        )}
       </section>
 
       {/* Parameters */}
@@ -520,7 +571,7 @@ function Step2Config({
         <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-4">Parameters</h3>
         <div className="space-y-5">
 
-          {(config.model === 'pls' || config.model === 'pcr') && (
+          {showComponents && (
             <div>
               <div className="flex items-center gap-1 mb-1">
                 <span className="text-sm text-slate-700 font-medium">Number of components</span>
@@ -542,13 +593,14 @@ function Step2Config({
                     <span className="text-slate-400 font-normal ml-1">— the selected component (red dot) is highlighted</span>
                   </p>
                   <Plot
+                    key={Math.min(config.nComponents, maxComp)}
                     data={[{
                       x: loocvData.map((_, i) => i + 1),
                       y: loocvData,
                       type: 'scatter', mode: 'lines+markers',
                       line: { color: '#3b82f6', width: 2 },
                       marker: {
-                        size: 8,
+                        size: loocvData.map((_, i) => i + 1 === Math.min(config.nComponents, maxComp) ? 11 : 8),
                         color: loocvData.map((_, i) => i + 1 === Math.min(config.nComponents, maxComp) ? '#ef4444' : '#3b82f6'),
                         line: {
                           color: loocvData.map((_, i) => i + 1 === Math.min(config.nComponents, maxComp) ? '#b91c1c' : '#1d4ed8'),
@@ -572,7 +624,7 @@ function Step2Config({
             </div>
           )}
 
-          {(config.model === 'ridge' || config.model === 'lasso') && (
+          {showLambda && (
             <div>
               <div className="flex items-center gap-1 mb-1">
                 <span className="text-sm text-slate-700 font-medium">Regularisation strength (λ)</span>
@@ -637,14 +689,13 @@ function ModelResultsPanel({
   spectra: Spectrum[];
   plotDivRef?: React.MutableRefObject<HTMLElement | null>;
 }) {
-  const spectraMap = new Map(spectra.map(s => [s.id, s]));
+  const spectraMap = useMemo(() => new Map(spectra.map(s => [s.id, s])), [spectra]);
   const trainPreds = results.predictions.filter(p => p.split === 'train');
   const testPreds  = results.predictions.filter(p => p.split === 'test');
   const allTrue = results.predictions.map(p => p.yTrue);
   const min1to1 = Math.min(...allTrue);
   const max1to1 = Math.max(...allTrue);
 
-  const fmt = (v: number | null, d = 4) => v === null ? '—' : isNaN(v) ? 'err' : v.toFixed(d);
   const showCoefficients = results.model !== 'pcr' && results.coefficients.length <= 100;
   const isUnivariate = results.featureLabels.length === 1;
   const slope = isUnivariate ? (results.coefficients[0]?.value ?? null) : null;
@@ -652,7 +703,7 @@ function ModelResultsPanel({
     ? Math.sqrt(Math.abs(results.trainR2)) * (slope >= 0 ? 1 : -1)
     : null;
 
-  const summary = generateSummary(results, yLabel);
+  const summary = useMemo(() => generateSummary(results, yLabel), [results, yLabel]);
 
   const qualityColour =
     results.trainR2 >= 0.90 ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
@@ -873,10 +924,6 @@ function Step3Results({
   const [activeTab, setActiveTab] = useState<'overview' | ModelType>(isCompareMode ? 'overview' : results.model);
   const plotDivRef = useRef<HTMLElement | null>(null);
 
-  const activeResults = useMemo(() => {
-    if (!isCompareMode || activeTab === 'overview') return results;
-    return allModelResults!.find(r => r.model === activeTab) ?? results;
-  }, [isCompareMode, activeTab, results, allModelResults]);
 
   const handleDownloadReport = async () => {
     let png = '';
@@ -886,8 +933,6 @@ function Step3Results({
     }
     downloadReport(results, yLabel, isCompareMode ? '' : png, allModelResults ?? undefined);
   };
-
-  const fmt = (v: number | null, d = 4) => v === null ? '—' : isNaN(v) ? 'err' : v.toFixed(d);
 
   // Overview comparison banner text
   const comparisonBannerText = useMemo(() => {
@@ -900,7 +945,7 @@ function Step3Results({
     let s = `${results.comparison.length} models trained with identical features and parameters. `;
     s += `${best.label} achieved the highest ${metric} (${bestScore.toFixed(4)})`;
     if (currentRank > 1) {
-      const suffix = currentRank === 2 ? 'nd' : currentRank === 3 ? 'rd' : 'th';
+      const suffix = currentRank === 1 ? 'st' : currentRank === 2 ? 'nd' : currentRank === 3 ? 'rd' : 'th';
       const curScore = hasTest ? results.comparison[currentRank - 1]!.testR2! : results.comparison[currentRank - 1]!.trainR2;
       s += `, while the selected ${MODEL_LABELS[results.model]} ranked ${currentRank}${suffix} (${metric} = ${curScore.toFixed(4)})`;
     } else {
@@ -909,6 +954,10 @@ function Step3Results({
     s += '. Use the model tabs to inspect individual scatter plots, residuals, and coefficients.';
     return s;
   }, [results.comparison, results.model]);
+
+  const activeTabRes = isCompareMode && activeTab !== 'overview'
+    ? allModelResults!.find(r => r.model === activeTab) ?? null
+    : null;
 
   return (
     <div className="flex flex-col h-full">
@@ -950,30 +999,26 @@ function Step3Results({
                 )}
               </>
             )}
-            {isCompareMode && activeTab !== 'overview' && (() => {
-              const tabRes = allModelResults!.find(r => r.model === activeTab);
-              if (!tabRes) return null;
-              return (
-                <>
-                  <button onClick={() => downloadResultsCsv(tabRes)}
+            {activeTabRes && (
+              <>
+                <button onClick={() => downloadResultsCsv(activeTabRes)}
+                  className="px-3 py-1.5 text-xs border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 transition-colors flex items-center gap-1.5">
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  </svg>
+                  Results CSV
+                </button>
+                {activeTabRes.coefficients.length > 0 && (
+                  <button onClick={() => downloadCoefficientsCsv(activeTabRes)}
                     className="px-3 py-1.5 text-xs border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 transition-colors flex items-center gap-1.5">
                     <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                     </svg>
-                    Results CSV
+                    Coefficients CSV
                   </button>
-                  {tabRes.coefficients.length > 0 && (
-                    <button onClick={() => downloadCoefficientsCsv(tabRes)}
-                      className="px-3 py-1.5 text-xs border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 transition-colors flex items-center gap-1.5">
-                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                      </svg>
-                      Coefficients CSV
-                    </button>
-                  )}
-                </>
-              );
-            })()}
+                )}
+              </>
+            )}
             <button onClick={handleDownloadReport}
               className="px-3 py-1.5 text-xs bg-violet-500 text-white rounded-lg hover:bg-violet-600 transition-colors flex items-center gap-1.5">
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1068,8 +1113,18 @@ function Step3Results({
                             >
                               <td className="px-3 py-2 font-medium text-slate-700">
                                 {row.label}
-                                {isBest && <span className="ml-1.5 text-[10px] bg-blue-100 text-blue-700 rounded-full px-1.5 py-0.5 font-semibold">★ best</span>}
-                                {isCurrent && !isBest && <span className="ml-1.5 text-[10px] text-slate-400">← selected</span>}
+                                {isBest && (
+                                  <span
+                                    className="ml-1.5 text-[10px] bg-blue-100 text-blue-700 rounded-full px-1.5 py-0.5 font-semibold cursor-help"
+                                    title={`Ranked 1st by ${results.comparison![0]!.testR2 !== null ? 'test R²' : 'train R²'} (highest = best). All models were trained with identical features and parameters.`}
+                                  >★ best</span>
+                                )}
+                                {isCurrent && !isBest && (
+                                  <span
+                                    className="ml-1.5 text-[10px] text-slate-400 cursor-help"
+                                    title="This was the model you selected in Step 2. It placed below the top-ranked model on this dataset."
+                                  >← your pick</span>
+                                )}
                               </td>
                               <td className="px-3 py-2 text-right font-mono text-slate-700">{fmt(isNaN(row.trainR2) ? null : row.trainR2)}</td>
                               <td className="px-3 py-2 text-right font-mono text-slate-700">{fmt(isNaN(row.trainRMSE) ? null : row.trainRMSE)}</td>
@@ -1115,7 +1170,7 @@ function Step3Results({
           )}
 
           {/* Individual model tab (compare mode) or single model view */}
-          {(!isCompareMode || (isCompareMode && activeTab !== 'overview')) && (
+          {(!isCompareMode || activeTab !== 'overview') && (
             <ModelResultsPanel
               results={isCompareMode ? (allModelResults!.find(r => r.model === activeTab) ?? results) : results}
               yLabel={yLabel}
@@ -1180,6 +1235,7 @@ export function CalibrationPage({ spectra, onClose }: Props) {
   );
   const [features, setFeatures] = useState<FeatureStrategy>(DEFAULT_CONFIG.features);
   const [config, setConfig] = useState<ModelConfig>(DEFAULT_CONFIG);
+  const [selectedModels, setSelectedModels] = useState<ModelType[]>(['pls']);
   const [results, setResults] = useState<CalibrationResults | null>(null);
   const [allModelResults, setAllModelResults] = useState<CalibrationResults[] | null>(null);
   const [running, setRunning] = useState(false);
@@ -1191,7 +1247,12 @@ export function CalibrationPage({ spectra, onClose }: Props) {
   const canStep2 = trainCount >= 2;
   const canStep3 = results !== null;
 
-  const effectiveConfig: ModelConfig = { ...config, features };
+  const effectiveConfig: ModelConfig = {
+    ...config,
+    features,
+    model: selectedModels[0] ?? 'pls',
+    compareAll: selectedModels.length > 1,
+  };
 
   const runModel = useCallback(async () => {
     setError('');
@@ -1199,7 +1260,7 @@ export function CalibrationPage({ spectra, onClose }: Props) {
     setAllModelResults(null);
 
     if (effectiveConfig.compareAll) {
-      const modelsToRun: ModelType[] = ['pls', 'pcr', 'mlr', 'ridge', 'lasso'];
+      const modelsToRun: ModelType[] = selectedModels;
       const collected: CalibrationResults[] = [];
 
       try {
@@ -1264,7 +1325,7 @@ export function CalibrationPage({ spectra, onClose }: Props) {
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [spectra, labels, effectiveConfig]);
+  }, [spectra, labels, effectiveConfig, selectedModels]);
 
   const displayYLabel = yLabel.trim() || 'Y';
 
@@ -1315,11 +1376,11 @@ export function CalibrationPage({ spectra, onClose }: Props) {
               <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
                 <div
                   className="bg-blue-500 h-1.5 rounded-full transition-all duration-500"
-                  style={{ width: `${Math.round((progress.current - 1) / progress.total * 100)}%` }}
+                  style={{ width: `${Math.round(progress.current / progress.total * 100)}%` }}
                 />
               </div>
               <p className="text-xs text-slate-400 mt-2 font-mono">
-                {Math.round((progress.current - 1) / progress.total * 100)}%
+                {Math.round(progress.current / progress.total * 100)}%
               </p>
             </div>
           </div>
@@ -1343,6 +1404,8 @@ export function CalibrationPage({ spectra, onClose }: Props) {
             features={features}
             config={config}
             onChange={setConfig}
+            selectedModels={selectedModels}
+            onModelsChange={setSelectedModels}
           />
         )}
         {step === 3 && results && (

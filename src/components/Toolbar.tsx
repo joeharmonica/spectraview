@@ -31,21 +31,50 @@ export function Toolbar({
 
   const exportCSV = () => {
     if (selectedSpectra.length === 0) return;
-    selectedSpectra.forEach(spectrum => {
-      const displayY = applyProcessing(spectrum.wavelengths, spectrum.intensities, spectrum.processing);
-      const { wavelengths: wl } = spectrum.processing.crop
-        ? { wavelengths: spectrum.wavelengths.filter(w => w >= spectrum.processing.crop!.minWl && w <= spectrum.processing.crop!.maxWl) }
-        : { wavelengths: spectrum.wavelengths };
+
+    // Build per-spectrum data (cropped wavelengths + processed intensities)
+    const cols = selectedSpectra.map(s => {
+      const intensities = applyProcessing(s.wavelengths, s.intensities, s.processing);
+      const wavelengths = s.processing.crop
+        ? s.wavelengths.filter(w => w >= s.processing.crop!.minWl && w <= s.processing.crop!.maxWl)
+        : s.wavelengths;
+      return { name: s.label || s.name, wavelengths, intensities };
+    });
+
+    // Single-spectrum: simple two-column format
+    if (cols.length === 1) {
+      const { name, wavelengths, intensities } = cols[0]!;
       const lines = ['Wavelength (nm),Intensity (processed)'];
-      wl.forEach((w, i) => { lines.push(`${w},${displayY[i] ?? ''}`); });
+      wavelengths.forEach((w, i) => lines.push(`${w},${intensities[i] ?? ''}`));
       const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${spectrum.name.replace(/[^a-z0-9]/gi, '_')}.csv`;
+      a.download = `${name.replace(/[^a-z0-9]/gi, '_')}.csv`;
       a.click();
       URL.revokeObjectURL(url);
-    });
+      return;
+    }
+
+    // Multi-spectrum: shared wavelength column + one intensity column per spectrum
+    const safeNames = cols.map(c => `"${c.name.replace(/"/g, '""')}"`);
+    const header = ['Wavelength (nm)', ...safeNames].join(',');
+    const maxLen = Math.max(...cols.map(c => c.wavelengths.length));
+    const lines = [header];
+    for (let i = 0; i < maxLen; i++) {
+      const row = [
+        cols[0]!.wavelengths[i] ?? '',
+        ...cols.map(c => c.intensities[i] ?? ''),
+      ].join(',');
+      lines.push(row);
+    }
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'spectra_export.csv';
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   return (

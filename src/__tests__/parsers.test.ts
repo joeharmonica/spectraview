@@ -195,7 +195,7 @@ describe('parseFileWithMapping', () => {
       ['500', '0.456'],
       ['600', '0.789'],
     ];
-    const spectra = parseFileWithMapping(rows, 'test.csv', 0, 1, 1);
+    const spectra = parseFileWithMapping(rows, 'test.csv', 0, [1], 1);
     expect(spectra.length).toBe(1);
     const s = spectra[0]!;
     expect(s.wavelengths).toEqual([400, 500, 600]);
@@ -209,7 +209,7 @@ describe('parseFileWithMapping', () => {
       ['bad', 'data'],
       ['500', '0.2'],
     ];
-    const spectra = parseFileWithMapping(rows, 'test.csv', 0, 1, 0);
+    const spectra = parseFileWithMapping(rows, 'test.csv', 0, [1], 0);
     expect(spectra[0]!.wavelengths).toEqual([400, 500]);
   });
 
@@ -218,7 +218,7 @@ describe('parseFileWithMapping', () => {
       ['Name', 'Value'],
       ['text', 'text'],
     ];
-    const spectra = parseFileWithMapping(rows, 'test.csv', 0, 1, 0);
+    const spectra = parseFileWithMapping(rows, 'test.csv', 0, [1], 0);
     expect(spectra).toHaveLength(0);
   });
 
@@ -229,13 +229,45 @@ describe('parseFileWithMapping', () => {
       ['400', '1.0'],
       ['500', '2.0'],
     ];
-    const spectra = parseFileWithMapping(rows, 'test.csv', 0, 1, 2);
+    const spectra = parseFileWithMapping(rows, 'test.csv', 0, [1], 2);
     expect(spectra[0]!.wavelengths).toEqual([400, 500]);
   });
 
   it('strips file extension from spectrum name', () => {
     const rows = [['400', '1.0'], ['500', '2.0']];
-    const spectra = parseFileWithMapping(rows, 'my_sample.csv', 0, 1, 0);
+    const spectra = parseFileWithMapping(rows, 'my_sample.csv', 0, [1], 0);
     expect(spectra[0]!.name).toBe('my_sample');
+  });
+
+  it('returns one spectrum per intensity column', () => {
+    const rows = [
+      ['Wavelength', 'Sample_A', 'Sample_B', 'Sample_C'],
+      ['400', '1.0', '2.0', '3.0'],
+      ['500', '1.5', '2.5', '3.5'],
+    ];
+    const spectra = parseFileWithMapping(rows, 'batch.csv', 0, [1, 2, 3], 1);
+    expect(spectra).toHaveLength(3);
+    expect(spectra[0]!.name).toBe('Sample_A');
+    expect(spectra[1]!.name).toBe('Sample_B');
+    expect(spectra[2]!.name).toBe('Sample_C');
+    expect(spectra[0]!.wavelengths).toEqual([400, 500]);
+    expect(spectra[1]!.intensities[0]).toBeCloseTo(2.0);
+  });
+
+  it('skips columns with no valid data and returns only populated spectra', () => {
+    const rows = [
+      ['Wavelength', 'Good', 'Empty'],
+      ['400', '1.0', ''],
+      ['500', '2.0', ''],
+    ];
+    const spectra = parseFileWithMapping(rows, 'test.csv', 0, [1, 2], 1);
+    expect(spectra).toHaveLength(1);
+    expect(spectra[0]!.name).toBe('Good');
+  });
+
+  it('uses filename as name for single-column import without header', () => {
+    const rows = [['400', '1.0'], ['500', '2.0']];
+    const spectra = parseFileWithMapping(rows, 'run1.csv', 0, [1], 0);
+    expect(spectra[0]!.name).toBe('run1');
   });
 });

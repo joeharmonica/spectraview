@@ -10,11 +10,11 @@ interface Props {
 }
 
 export function ColumnMappingModal({ request, onConfirm, onCancel }: Props) {
-  const { rawRows, suggestedHeaderRows, suggestedWavCol, suggestedIntCol } = request;
+  const { rawRows, suggestedHeaderRows, suggestedWavCol, suggestedIntCols } = request;
 
   const [headerRows, setHeaderRows] = useState(suggestedHeaderRows);
   const [wavCol, setWavCol] = useState(suggestedWavCol);
-  const [intCol, setIntCol] = useState(suggestedIntCol);
+  const [intCols, setIntCols] = useState<number[]>(suggestedIntCols);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -39,35 +39,61 @@ export function ColumnMappingModal({ request, onConfirm, onCancel }: Props) {
 
   const dataRows = useMemo(() => rawRows.slice(headerRows), [rawRows, headerRows]);
 
-  // Live mapped preview (up to 10 pairs)
+  // When wavCol changes, remove it from intCols if present
+  const handleWavColChange = (col: number) => {
+    setWavCol(col);
+    setIntCols(prev => prev.filter(c => c !== col));
+  };
+
+  const toggleIntCol = (col: number) => {
+    if (col === wavCol) return;
+    setIntCols(prev =>
+      prev.includes(col) ? prev.filter(c => c !== col) : [...prev, col].sort((a, b) => a - b)
+    );
+  };
+
+  const selectAllIntCols = () =>
+    setIntCols(Array.from({ length: maxCols }, (_, i) => i).filter(i => i !== wavCol));
+
+  const clearIntCols = () => setIntCols([]);
+
+  // Preview uses the first selected intensity column
+  const previewIntCol = intCols[0] ?? -1;
+
   const mappedPreview = useMemo(() => {
+    if (previewIntCol < 0) return [];
     const pairs: { wav: number; int: number }[] = [];
     for (const row of dataRows) {
       const w = parseFloat((row[wavCol] ?? '').trim());
-      const i = parseFloat((row[intCol] ?? '').trim());
+      const i = parseFloat((row[previewIntCol] ?? '').trim());
       if (!isNaN(w) && !isNaN(i)) pairs.push({ wav: w, int: i });
       if (pairs.length >= 10) break;
     }
     return pairs;
-  }, [dataRows, wavCol, intCol]);
+  }, [dataRows, wavCol, previewIntCol]);
 
-  // Count all valid pairs in data rows (for import button label)
+  // Count valid points for first selected column
   const totalValidPoints = useMemo(() => {
+    if (previewIntCol < 0) return 0;
     let count = 0;
     for (const row of dataRows) {
       const w = parseFloat((row[wavCol] ?? '').trim());
-      const i = parseFloat((row[intCol] ?? '').trim());
+      const i = parseFloat((row[previewIntCol] ?? '').trim());
       if (!isNaN(w) && !isNaN(i)) count++;
     }
     return count;
-  }, [dataRows, wavCol, intCol]);
+  }, [dataRows, wavCol, previewIntCol]);
 
   const handleImport = async () => {
     setError(null);
+    if (intCols.length === 0) {
+      setError('Select at least one intensity column.');
+      return;
+    }
     const text = await request.file.text();
     const result = Papa.parse<string[]>(text, { skipEmptyLines: false });
     const rows = result.data as string[][];
-    const spectra = parseFileWithMapping(rows, request.filename, wavCol, intCol, headerRows);
+    const spectra = parseFileWithMapping(rows, request.filename, wavCol, intCols, headerRows);
     if (spectra.length === 0) {
       setError('No numeric data found. Adjust column selection or header row count.');
       return;
@@ -76,10 +102,16 @@ export function ColumnMappingModal({ request, onConfirm, onCancel }: Props) {
   };
 
   const colStyle = (colIdx: number, isHeader: boolean) => {
-    if (colIdx === wavCol) return isHeader ? 'bg-blue-100 text-blue-800 font-semibold' : 'bg-blue-50 text-blue-800 font-medium';
-    if (colIdx === intCol) return isHeader ? 'bg-emerald-100 text-emerald-800 font-semibold' : 'bg-emerald-50 text-emerald-800 font-medium';
+    if (colIdx === wavCol)
+      return isHeader ? 'bg-blue-100 text-blue-800 font-semibold' : 'bg-blue-50 text-blue-800 font-medium';
+    if (intCols.includes(colIdx))
+      return isHeader ? 'bg-emerald-100 text-emerald-800 font-semibold' : 'bg-emerald-50 text-emerald-800 font-medium';
     return isHeader ? 'bg-slate-50 text-slate-500' : 'text-slate-500';
   };
+
+  const importLabel = intCols.length > 1
+    ? `Import (${intCols.length} spectra · ${totalValidPoints} pts)`
+    : totalValidPoints > 0 ? `Import (${totalValidPoints} pts)` : 'Import';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
@@ -95,52 +127,82 @@ export function ColumnMappingModal({ request, onConfirm, onCancel }: Props) {
         </div>
 
         {/* Controls */}
-        <div className="px-4 sm:px-6 py-3 border-b border-slate-100 flex-shrink-0 grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
-          <div>
-            <label className="text-xs font-medium text-slate-500 block mb-1">
-              <span className="inline-block w-2.5 h-2.5 rounded-full bg-blue-400 mr-1.5" />
-              Wavelength column
-            </label>
-            <select
-              value={wavCol}
-              onChange={e => setWavCol(Number(e.target.value))}
-              className="w-full text-sm border border-slate-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-300"
-            >
-              {columnHeaders.map((h, i) => (
-                <option key={i} value={i}>{h}</option>
-              ))}
-            </select>
+        <div className="px-4 sm:px-6 py-3 border-b border-slate-100 flex-shrink-0 space-y-3">
+
+          {/* Row 1: Wavelength + Header rows */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
+            <div>
+              <label className="text-xs font-medium text-slate-500 block mb-1">
+                <span className="inline-block w-2.5 h-2.5 rounded-full bg-blue-400 mr-1.5" />
+                Wavelength column
+              </label>
+              <select
+                value={wavCol}
+                onChange={e => handleWavColChange(Number(e.target.value))}
+                className="w-full text-sm border border-slate-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-300"
+              >
+                {columnHeaders.map((h, i) => (
+                  <option key={i} value={i}>{h}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="text-xs font-medium text-slate-500 block mb-1">Header rows to skip</label>
+              <input
+                type="number"
+                min={0}
+                max={rawRows.length - 1}
+                value={headerRows}
+                onChange={e => {
+                  const v = Math.max(0, Math.min(rawRows.length - 1, parseInt(e.target.value) || 0));
+                  setHeaderRows(v);
+                }}
+                className="w-full text-sm border border-slate-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-300"
+              />
+            </div>
           </div>
 
+          {/* Row 2: Intensity columns multi-selector */}
           <div>
-            <label className="text-xs font-medium text-slate-500 block mb-1">
-              <span className="inline-block w-2.5 h-2.5 rounded-full bg-emerald-400 mr-1.5" />
-              Intensity column
-            </label>
-            <select
-              value={intCol}
-              onChange={e => setIntCol(Number(e.target.value))}
-              className="w-full text-sm border border-slate-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-300"
-            >
-              {columnHeaders.map((h, i) => (
-                <option key={i} value={i}>{h}</option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="text-xs font-medium text-slate-500 block mb-1">Header rows to skip</label>
-            <input
-              type="number"
-              min={0}
-              max={rawRows.length - 1}
-              value={headerRows}
-              onChange={e => {
-                const v = Math.max(0, Math.min(rawRows.length - 1, parseInt(e.target.value) || 0));
-                setHeaderRows(v);
-              }}
-              className="w-full text-sm border border-slate-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-300"
-            />
+            <div className="flex items-center gap-2 mb-1.5">
+              <label className="text-xs font-medium text-slate-500">
+                <span className="inline-block w-2.5 h-2.5 rounded-full bg-emerald-400 mr-1.5" />
+                Intensity columns
+                <span className="ml-1.5 text-slate-400 font-normal">
+                  ({intCols.length} selected — one spectrum per column)
+                </span>
+              </label>
+              <button
+                onClick={selectAllIntCols}
+                className="text-xs text-blue-500 hover:text-blue-700 transition-colors"
+              >All</button>
+              <span className="text-slate-200">·</span>
+              <button
+                onClick={clearIntCols}
+                className="text-xs text-slate-400 hover:text-slate-600 transition-colors"
+              >None</button>
+            </div>
+            <div className="flex flex-wrap gap-1.5 max-h-20 overflow-y-auto pr-1">
+              {columnHeaders.map((h, i) => {
+                if (i === wavCol) return null;
+                const selected = intCols.includes(i);
+                return (
+                  <button
+                    key={i}
+                    onClick={() => toggleIntCol(i)}
+                    className={`px-2 py-0.5 rounded-md text-xs font-medium border transition-colors truncate max-w-[120px]
+                      ${selected
+                        ? 'bg-emerald-50 border-emerald-300 text-emerald-700 hover:bg-emerald-100'
+                        : 'bg-white border-slate-200 text-slate-400 hover:border-slate-300 hover:text-slate-600'
+                      }`}
+                    title={h}
+                  >
+                    {selected && <span className="mr-1">✓</span>}{h}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
 
@@ -199,11 +261,16 @@ export function ColumnMappingModal({ request, onConfirm, onCancel }: Props) {
               {totalValidPoints > 0 && (
                 <span className="ml-1 font-medium text-emerald-600">· {totalValidPoints} pts</span>
               )}
+              {intCols.length > 1 && (
+                <span className="ml-1 text-slate-400">· {intCols.length} spectra</span>
+              )}
             </p>
             <div className="flex-1 overflow-auto">
               {mappedPreview.length === 0 ? (
                 <div className="p-4 text-xs text-slate-400 text-center mt-6">
-                  No valid pairs found.<br />Check column selection.
+                  {intCols.length === 0
+                    ? 'Select at least one\nintensity column.'
+                    : 'No valid pairs found.\nCheck column selection.'}
                 </div>
               ) : (
                 <table className="text-xs w-full border-collapse">
@@ -212,8 +279,9 @@ export function ColumnMappingModal({ request, onConfirm, onCancel }: Props) {
                       <th className="px-3 py-1.5 text-left bg-blue-50 text-blue-700 border-b border-slate-100 sticky top-0">
                         Wavelength (nm)
                       </th>
-                      <th className="px-3 py-1.5 text-left bg-emerald-50 text-emerald-700 border-b border-slate-100 sticky top-0">
-                        Intensity (a.u.)
+                      <th className="px-3 py-1.5 text-left bg-emerald-50 text-emerald-700 border-b border-slate-100 sticky top-0 truncate max-w-[100px]"
+                          title={columnHeaders[previewIntCol]}>
+                        {columnHeaders[previewIntCol] ?? 'Intensity'} (a.u.)
                       </th>
                     </tr>
                   </thead>
@@ -231,6 +299,13 @@ export function ColumnMappingModal({ request, onConfirm, onCancel }: Props) {
                         </td>
                       </tr>
                     )}
+                    {intCols.length > 1 && (
+                      <tr>
+                        <td colSpan={2} className="px-3 py-2 text-slate-400 text-center italic text-xs border-t border-slate-100">
+                          +{intCols.length - 1} more spectrum{intCols.length > 2 ? 'a' : ''}
+                        </td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               )}
@@ -244,7 +319,7 @@ export function ColumnMappingModal({ request, onConfirm, onCancel }: Props) {
             <p className="text-xs text-red-500">{error}</p>
           ) : (
             <p className="text-xs text-slate-400">
-              Blue = wavelength · Green = intensity · Muted = header rows
+              Blue = wavelength · Green = selected intensity · Muted = header rows
             </p>
           )}
           <div className="flex gap-2">
@@ -256,11 +331,11 @@ export function ColumnMappingModal({ request, onConfirm, onCancel }: Props) {
             </button>
             <button
               onClick={() => void handleImport()}
-              disabled={totalValidPoints === 0}
+              disabled={intCols.length === 0 || totalValidPoints === 0}
               className="px-4 py-1.5 text-sm font-medium bg-blue-500 text-white rounded-lg hover:bg-blue-600
                 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
-              Import{totalValidPoints > 0 ? ` (${totalValidPoints} pts)` : ''}
+              {importLabel}
             </button>
           </div>
         </div>

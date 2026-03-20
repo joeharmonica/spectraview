@@ -177,7 +177,7 @@ describe('parseFileWithMapping — edge cases', () => {
       ['0.5', '400'],
       ['1.0', '500'],
     ];
-    const result = parseFileWithMapping(rows, 'test.csv', 1, 0, 1);
+    const result = parseFileWithMapping(rows, 'test.csv', 1, [0], 1);
     expect(result[0]!.wavelengths).toEqual([400, 500]);
     expect(result[0]!.intensities[0]).toBeCloseTo(0.5);
   });
@@ -189,19 +189,19 @@ describe('parseFileWithMapping — edge cases', () => {
       ['2', '500', '0.2', '0.18'],
     ];
     // Map col 1 = wavelength, col 3 = corrected intensity
-    const result = parseFileWithMapping(rows, 'test.csv', 1, 3, 1);
+    const result = parseFileWithMapping(rows, 'test.csv', 1, [3], 1);
     expect(result[0]!.wavelengths).toEqual([400, 500]);
     expect(result[0]!.intensities[1]).toBeCloseTo(0.18);
   });
 
   it('assigns format as unknown', () => {
     const rows = [['400', '1.0'], ['500', '2.0']];
-    expect(parseFileWithMapping(rows, 'test.csv', 0, 1, 0)[0]!.format).toBe('unknown');
+    expect(parseFileWithMapping(rows, 'test.csv', 0, [1], 0)[0]!.format).toBe('unknown');
   });
 
   it('handles empty file (0 data rows after header skip)', () => {
     const rows = [['Wavelength', 'Intensity']];
-    expect(parseFileWithMapping(rows, 'test.csv', 0, 1, 1)).toHaveLength(0);
+    expect(parseFileWithMapping(rows, 'test.csv', 0, [1], 1)).toHaveLength(0);
   });
 });
 
@@ -215,14 +215,14 @@ describe('buildMappingRequest — suggestedHeaderRows', () => {
     expect(detectFormat(rows)).toBe('unknown');
     // The first row starts with a number → suggestedHeaderRows should be 0
     // Verify via parseFileWithMapping with 0 header rows
-    const result = parseFileWithMapping(rows, 'test.csv', 0, 1, 0);
+    const result = parseFileWithMapping(rows, 'test.csv', 0, [1], 0);
     expect(result[0]!.wavelengths).toHaveLength(3);
   });
 
   it('CSV with one text header has 1 header row suggested', () => {
     // First row non-numeric → 1 header row, then data
     const rows = [['Wavelength', 'Intensity'], ['400', '1.0'], ['500', '2.0']];
-    const result = parseFileWithMapping(rows, 'test.csv', 0, 1, 1);
+    const result = parseFileWithMapping(rows, 'test.csv', 0, [1], 1);
     expect(result[0]!.wavelengths).toHaveLength(2);
   });
 });
