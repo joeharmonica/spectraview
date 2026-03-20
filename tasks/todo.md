@@ -136,6 +136,58 @@ re-slices already-stripped rows → inconsistent. No live mapped preview.
 
 ---
 
+---
+
+## Phase 6 — Adjustable Bottom Emission Slice Panel (2026-03-20)
+
+- [x] Add `bottomHeight` state + `startBottomDrag` in `ChartWorkspace.tsx`
+- [x] Add horizontal drag handle above emission slice panel (cursor-row-resize)
+- [x] Replace fixed `h-28` with `style={{ height: bottomHeight }}` (64–400 px range)
+- [x] Write tests in `src/__tests__/heatmap_panel.test.ts` (11 tests)
+- [x] Update `README.md` — heatmap description + drag-to-resize section
+- [x] `npm run test` — 142/142 passing
+- [x] `npm run build` — TypeScript clean
+
+## Phase 6 Review
+Bottom emission slice panel is now height-adjustable via drag handle. Mirrors left/right panel resize pattern. All tests pass, build clean.
+
+---
+
+---
+
+## Phase 7 — User Feedback Features (2026-03-20)
+
+### Feature 1: % Error column in Predictions table + % Error chart
+- [x] 1a. Add `% Error` column to predictions table (formula: residual/yTrue, fallback to yPred if yTrue=0)
+- [x] 1b. Add % Error bar chart below residuals section in `ModelResultsPanel`
+
+### Feature 2: Per-model parameter tuning (Step 2, multi-model mode)
+- [x] 2a. Add `perModelParams` state in `CalibrationPage`, pass to `Step2Config`
+- [x] 2b. Refactor `Step2Config`: single-model → unchanged; multi-model → per-model param sections with individual LOOCV charts
+- [x] 2c. Update `runModel` to merge per-model overrides per iteration
+
+### Feature 3: Response variable Y value pills in Library panel
+- [x] 3a. Add `yValue?: number` to `Spectrum` interface (`types/spectrum.ts`)
+- [x] 3b. Add `SET_SPECTRUM_Y_VALUE` action + reducer case + hook method (`hooks/useSpectra.ts`)
+- [x] 3c. Add Y-value pill UI to `SpectrumRow` + `onYValueChange` prop on `SpectrumLibrary`
+- [x] 3d. Wire `setSpectrumYValue` in `App.tsx`
+- [x] 3e. Pre-populate calibration labels from `spectrum.yValue` in `CalibrationPage`
+
+### Feature 4: Table view toggle in Library panel
+- [x] 4a. Add `libraryView` state + toggle icon button in `SpectrumLibrary` header
+- [x] 4b. Build `SpectrumTableView` sub-component (columns: Name, Format, λ Range, Points, Label, Y Value)
+- [x] 4c. Inline-editable Label + Y Value cells in table view
+
+### Verification
+- [x] `npm run build` — TypeScript clean
+- [x] `npm test` — 142/142 passing
+- [ ] Manual: % Error column correct (including yTrue=0 case)
+- [ ] Manual: multi-model step 2 shows per-model params
+- [ ] Manual: Y value pill persists and pre-fills calibration
+- [ ] Manual: table view toggle + inline editing works
+
+---
+
 ## Phase 3 Review
 All features implemented and verified:
 - Column mapping redesigned with live two-panel preview (raw + mapped)

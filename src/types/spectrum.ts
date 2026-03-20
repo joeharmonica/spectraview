@@ -29,6 +29,8 @@ export interface Spectrum {
   tags?: string[];
   /** User-defined chart label. When set, shown on the chart instead of `name`. */
   label?: string;
+  /** User-defined reference Y value for calibration (e.g. concentration). Pre-fills Step 1. */
+  yValue?: number;
 }
 
 /** A peak selected by the user in the Peak Table to be highlighted on the chart. */

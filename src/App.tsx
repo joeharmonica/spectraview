@@ -60,7 +60,7 @@ export default function App() {
     addSpectra, toggleSelect, selectAll, selectNone,
     removeSpectrum, setViewMode, setStackOffset,
     updateProcessingBulk, setSpectrumColor, renameSpectrum, duplicateSpectrum,
-    invertSelect, removeSelected, clearAll, setSpectrumLabel,
+    invertSelect, removeSelected, clearAll, setSpectrumLabel, setSpectrumYValue,
   } = useSpectra();
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -245,6 +245,7 @@ export default function App() {
                     onRename={renameSpectrum}
                     onColorChange={setSpectrumColor}
                     onLabelChange={setSpectrumLabel}
+                    onYValueChange={setSpectrumYValue}
                     onCollapse={() => setLibraryOpen(false)}
                   />
                 </div>

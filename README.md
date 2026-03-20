@@ -45,6 +45,8 @@ Shown automatically for unknown file formats:
 - **Rename** — double-click a spectrum name to edit inline
 - **Colour picker** — click the colour swatch to change the plot colour
 - **Custom chart labels** — click the coloured pill on any row (dashed border = not set; solid = set) to assign a display name used in the chart legend, tooltips, and peak table instead of the filename
+- **Y reference values** — click the teal **+ Y value** pill on any row to enter the known reference value (e.g. concentration, pH) for that spectrum. The value is stored with the spectrum and **auto-populates Step 1 of Calibration** so you never have to retype it. Displays as a teal `Y=…` badge; click the badge to edit.
+- **Table view** — click the grid icon in the library header to toggle between list view (default) and a spreadsheet-like table view. Table columns: colour+checkbox, Name, Format, λ Range, Points, **Label** (editable), **Y Value** (editable). Click any Label or Y Value cell to edit it inline — changes apply immediately and persist. Switch back with the list icon.
 - **Metadata viewer** — click the ℹ icon (hover to reveal) on RF-6000/Cary rows to expand an inline key-value panel showing instrument metadata (e.g. excitation wavelength, slit width)
 - **Collapsible** — the "←" chevron hides the panel for more chart space; re-expand via the ">" bar on desktop or the ☰ hamburger button in the header on mobile
 
@@ -56,7 +58,7 @@ Shown automatically for unknown file formats:
 |------|-------------|
 | **Overlap** | All selected spectra on a shared Y-axis |
 | **Stacked** | Spectra offset vertically; drag the **Offset** slider (0–100 %) to control spacing |
-| **Heatmap** | EEM 2D colour map (Viridis scale) from 3D fluorescence data; requires ≥ 2 rf6000_3d spectra; hover over the heatmap to preview the emission slice in a panel below the chart |
+| **Heatmap** | EEM 2D colour map (Viridis scale) from 3D fluorescence data; requires ≥ 2 rf6000_3d spectra; hover over the heatmap to preview the emission slice in a height-adjustable panel below the chart; drag the top edge of the panel to resize it (64–400 px) |
 
 ---
 
@@ -129,6 +131,8 @@ Open via the **Calibration** button in the toolbar. A 3-step wizard builds quant
 
 Assign a known reference value (Y) to each spectrum. Spectra with no value are excluded from the model. Optionally mark each spectrum as **Train** or **Test** to evaluate generalisation on held-out data.
 
+**Tip:** Y values entered in the Library panel (via the teal pill) are automatically pre-populated here, saving you from retyping them each time you build a calibration.
+
 **Spectral Input Features (X) — three modes:**
 
 | Mode | Description | Best for |
@@ -141,26 +145,40 @@ Assign a known reference value (Y) to each spectrum. Spectra with no value are e
 
 **Models to run** — a multi-select dropdown lets you choose any combination of the five algorithms. Select one model to run it individually; select two or more to run them sequentially and generate a ranked comparison.
 
+**Single model selected:**
+
 | Setting | Options |
 |---------|---------|
-| **Models** | PLS-R · PCR · MLR · Ridge (L2) · Lasso (L1) — any subset, or all five |
-| **Components** | Number of latent variables for PLS-R / PCR; LOOCV chart guides selection (shown when PLS-R or PCR is selected) |
-| **λ (lambda)** | Regularisation strength for Ridge / Lasso (shown when Ridge or Lasso is selected) |
+| **Model** | PLS-R · PCR · MLR · Ridge (L2) · Lasso (L1) |
+| **Components** | Number of latent variables for PLS-R / PCR; LOOCV chart guides selection |
+| **λ (lambda)** | Regularisation strength for Ridge / Lasso |
 | **Auto-scale** | Zero-mean, unit-variance standardisation (recommended) |
 | **CV folds** | k-fold cross-validation (0 = off) |
+
+**Multiple models selected (comparison mode):**
+
+Each model gets its **own parameter card** for individual tuning:
+- **PLS-R / PCR** — separate *Components* slider and LOOCV chart per model
+- **Ridge / Lasso** — separate *λ* slider per model
+- **MLR** — no tunable parameters (noted in its card)
+- **Auto-scale** and **CV folds** remain shared across all models
 
 #### Step 3 — Review Results
 
 **Single model (one model selected):**
 - **Summary banner** — auto-generated natural-language assessment of fit quality, overfitting risk (train–test R² gap > 0.15), and top influential wavelengths. Colour-coded: green (R² ≥ 0.90), amber (0.70–0.89), red (< 0.70).
 - **Metric cards** — Train R², RMSE, MAE; Test R², RMSE, MAE (when test split exists); CV RMSE (when cross-validation enabled). Univariate mode additionally shows **Pearson *r*** and **Sensitivity (slope)**.
-- **Section banners** — each chart section (Scatter, Residuals, Coefficients, Predictions) has a contextual banner explaining what to look for.
+- **Predicted vs Actual scatter** — train (blue) and test (green) points against the 1:1 line.
+- **Residuals chart** — bar chart of True − Predicted; bars exceeding 2× train RMSE are flagged red.
+- **Percentage Errors chart** — bar chart of `residual ÷ |true value| × 100 %`; uses predicted value as denominator when true value is zero. Bars exceeding ±10 % are flagged red.
+- **Predictions table** — full per-sample breakdown including **% Error column**; residuals and % errors flagged red when out of range.
+- **Coefficients chart** — positive (blue) / negative (red) wavelength regression coefficients (shown for MLR, Ridge, Lasso when ≤ 100 features).
 - **Downloads** — Results CSV · Coefficients CSV · HTML Report.
 
 **Comparison mode (two or more models selected):**
 - Models run sequentially with a live progress bar showing the current model and percentage.
 - **Overview tab** — ranked comparison table (click a row to jump to that model's tab) and R² bar chart. ★ marks the best model ranked by test R² (or train R² if no test split). ← your pick marks the first model you selected when it is not the top-ranked.
-- **Per-model tabs** — each tab shows full individual results: summary banner, metric cards, scatter plot, residuals, coefficient chart, and predictions table.
+- **Per-model tabs** — each tab shows the full individual result set: summary banner, metric cards, scatter plot, residuals, percentage errors chart, predictions table (with % Error column), and coefficient chart.
 - **HTML Report** — covers all models: comparison table with anchor links + a dedicated metrics and predictions section per model.
 
 ---
@@ -243,7 +261,7 @@ npm test          # run once
 npm run test:ui   # Vitest browser UI
 ```
 
-128 tests across 6 suites covering parsers, processing, calibration, edge cases, medium features, and low-level features.
+142 tests across 7 suites covering parsers, processing, calibration, edge cases, medium features, low-level features, and heatmap panel behaviour.
 
 ### Build
 
@@ -299,8 +317,10 @@ Raw `wavelengths` and `intensities` are stored unchanged on each `Spectrum` obje
 
 All spectrum state lives in a single `useReducer` in `useSpectra`. Actions:
 
-`ADD_SPECTRA` · `TOGGLE_SELECT` · `SELECT_ALL` · `SELECT_NONE` · `INVERT_SELECT` · `REMOVE_SPECTRUM` · `REMOVE_SELECTED` · `CLEAR_ALL` · `DUPLICATE_SPECTRUM` · `SET_VIEW_MODE` · `SET_STACK_OFFSET` · `UPDATE_PROCESSING` · `UPDATE_PROCESSING_BULK` · `SET_SPECTRUM_COLOR` · `RENAME_SPECTRUM` · `SET_SPECTRUM_LABEL` · `RESTORE_FROM_DB`
+`ADD_SPECTRA` · `TOGGLE_SELECT` · `SELECT_ALL` · `SELECT_NONE` · `INVERT_SELECT` · `REMOVE_SPECTRUM` · `REMOVE_SELECTED` · `CLEAR_ALL` · `DUPLICATE_SPECTRUM` · `SET_VIEW_MODE` · `SET_STACK_OFFSET` · `UPDATE_PROCESSING` · `UPDATE_PROCESSING_BULK` · `SET_SPECTRUM_COLOR` · `RENAME_SPECTRUM` · `SET_SPECTRUM_LABEL` · `SET_SPECTRUM_Y_VALUE` · `RESTORE_FROM_DB`
 
 ### Drag-to-resize panels
 
 Both side panels are resizable on desktop via `startPanelDrag()` in `App.tsx` — attaches `mousemove`/`mouseup` listeners to `document` with an incremental delta approach, clamped between 180 px and 520 px. Drag handles are hidden on mobile where panels become fixed overlays.
+
+The bottom emission slice panel (heatmap view only) is resizable via `startBottomDrag()` in `ChartWorkspace.tsx` — same incremental delta pattern, but vertical (`clientY`). Dragging the 4 px handle upward grows the panel; downward shrinks it. Clamped between 64 px (minimum readable) and 400 px. Default height is 112 px.

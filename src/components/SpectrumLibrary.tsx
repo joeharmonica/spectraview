@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo } from 'react';
+import { useState, useRef, useMemo, useCallback } from 'react';
 import type { Spectrum, SpectrumFormat } from '../types/spectrum';
 import { ColorPicker } from './ColorPicker';
 
@@ -20,6 +20,7 @@ interface Props {
   onRename: (id: string, name: string) => void;
   onColorChange: (id: string, color: string) => void;
   onLabelChange: (id: string, label: string) => void;
+  onYValueChange: (id: string, yValue: number | undefined) => void;
   onCollapse: () => void;
 }
 
@@ -27,7 +28,7 @@ export function SpectrumLibrary({
   spectra, selectedIds,
   onToggleSelect, onSelectAll, onSelectNone, onInvertSelect,
   onRemove, onRemoveSelected, onClearAll, onDuplicate,
-  onAddMore, onRename, onColorChange, onLabelChange, onCollapse,
+  onAddMore, onRename, onColorChange, onLabelChange, onYValueChange, onCollapse,
 }: Props) {
   const [search, setSearch] = useState('');
   const [formatFilter, setFormatFilter] = useState<FormatFilter>('all');
@@ -37,6 +38,7 @@ export function SpectrumLibrary({
   const [renameValue, setRenameValue] = useState('');
   const [labelingId, setLabelingId] = useState<string | null>(null);
   const [labelValue, setLabelValue] = useState('');
+  const [viewMode, setViewMode] = useState<'list' | 'table'>('list');
 
   const presentFormats = useMemo(() => [...new Set(spectra.map(s => s.format))], [spectra]);
 
@@ -103,13 +105,35 @@ export function SpectrumLibrary({
         </h2>
         <div className="flex items-center gap-2 flex-shrink-0">
           {spectra.length > 0 && (
-            <button
-              onClick={onClearAll}
-              className="text-xs text-slate-400 hover:text-red-500 transition-colors"
-              title="Clear all spectra"
-            >
-              Clear all
-            </button>
+            <>
+              {/* View toggle */}
+              <button
+                onClick={() => setViewMode(v => v === 'list' ? 'table' : 'list')}
+                title={viewMode === 'list' ? 'Switch to table view' : 'Switch to list view'}
+                className="text-slate-400 hover:text-slate-600 transition-colors"
+              >
+                {viewMode === 'list' ? (
+                  /* Table icon */
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                      d="M3 10h18M3 14h18M10 3v18M3 6a3 3 0 013-3h12a3 3 0 013 3v12a3 3 0 01-3 3H6a3 3 0 01-3-3V6z" />
+                  </svg>
+                ) : (
+                  /* List icon */
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                      d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+                  </svg>
+                )}
+              </button>
+              <button
+                onClick={onClearAll}
+                className="text-xs text-slate-400 hover:text-red-500 transition-colors"
+                title="Clear all spectra"
+              >
+                Clear all
+              </button>
+            </>
           )}
           <button onClick={onAddMore} className="text-xs text-blue-600 hover:text-blue-800 font-medium">
             + Add
@@ -193,12 +217,20 @@ export function SpectrumLibrary({
         </div>
       )}
 
-      {/* Spectrum list */}
+      {/* Spectrum list or table */}
       <div className="flex-1 overflow-y-auto">
         {filtered.length === 0 ? (
           <p className="text-xs text-slate-400 text-center mt-8 px-4">
             {spectra.length === 0 ? 'No spectra loaded yet.' : 'No results match your search.'}
           </p>
+        ) : viewMode === 'table' ? (
+          <SpectrumTableView
+            spectra={filtered}
+            selectedIds={selectedIds}
+            onToggle={onToggleSelect}
+            onLabelChange={onLabelChange}
+            onYValueChange={onYValueChange}
+          />
         ) : (
           <ul className="divide-y divide-slate-100">
             {filtered.map(spectrum => (
@@ -223,6 +255,7 @@ export function SpectrumLibrary({
                 onLabelClick={() => startLabel(spectrum)}
                 onLabelChange={setLabelValue}
                 onLabelCommit={() => commitLabel(spectrum.id)}
+                onYValueChange={onYValueChange}
               />
             ))}
           </ul>
@@ -236,6 +269,7 @@ function SpectrumRow({
   spectrum, isSelected, isRenaming, renameValue, isLabeling, labelValue, showColorPicker,
   onToggle, onRemove, onDuplicate, onColorSwatchClick, onColorChange, onColorPickerClose,
   onNameClick, onRenameChange, onRenameCommit, onLabelClick, onLabelChange, onLabelCommit,
+  onYValueChange,
 }: {
   spectrum: Spectrum;
   isSelected: boolean;
@@ -256,9 +290,12 @@ function SpectrumRow({
   onLabelClick: () => void;
   onLabelChange: (v: string) => void;
   onLabelCommit: () => void;
+  onYValueChange: (id: string, yValue: number | undefined) => void;
 }) {
   const renameRef = useRef<HTMLInputElement>(null);
   const [metaOpen, setMetaOpen] = useState(false);
+  const [editingYValue, setEditingYValue] = useState(false);
+  const [yValueInput, setYValueInput] = useState('');
 
   const hasProcessing = spectrum.processing.normalize !== null ||
     spectrum.processing.smooth !== null ||
@@ -353,6 +390,48 @@ function SpectrumRow({
             + label
           </button>
         )}
+        {/* Y value pill */}
+        {editingYValue ? (
+          <input
+            autoFocus
+            type="number"
+            value={yValueInput}
+            placeholder="Y reference value"
+            onChange={e => setYValueInput(e.target.value)}
+            onBlur={() => {
+              const v = yValueInput.trim() === '' ? undefined : parseFloat(yValueInput);
+              onYValueChange(spectrum.id, v !== undefined && isNaN(v) ? undefined : v);
+              setEditingYValue(false);
+            }}
+            onKeyDown={e => {
+              if (e.key === 'Enter' || e.key === 'Escape') {
+                const v = yValueInput.trim() === '' ? undefined : parseFloat(yValueInput);
+                onYValueChange(spectrum.id, v !== undefined && isNaN(v) ? undefined : v);
+                setEditingYValue(false);
+              }
+            }}
+            onClick={e => e.stopPropagation()}
+            className="w-full text-xs border border-teal-300 rounded px-1.5 py-0.5 focus:outline-none mt-1"
+          />
+        ) : spectrum.yValue !== undefined ? (
+          <button
+            onClick={e => { e.stopPropagation(); setYValueInput(String(spectrum.yValue)); setEditingYValue(true); }}
+            title="Y reference value — click to edit"
+            className="inline-flex items-center gap-1 max-w-full px-2 py-0.5 rounded-full text-white text-xs font-medium mt-1 truncate hover:opacity-80 transition-opacity bg-teal-500"
+          >
+            <span className="text-[9px] opacity-80">Y=</span>
+            <span className="truncate">{spectrum.yValue}</span>
+          </button>
+        ) : (
+          <button
+            onClick={e => { e.stopPropagation(); setYValueInput(''); setEditingYValue(true); }}
+            title="Add Y reference value for calibration"
+            className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-xs font-medium mt-1 border border-dashed text-teal-400 hover:text-teal-600 transition-colors"
+            style={{ borderColor: '#14b8a6' }}
+          >
+            + Y value
+          </button>
+        )}
         {spectrum.wavelengths.length > 0 && (
           <p className="text-xs text-slate-300 hidden group-hover:block">
             {spectrum.wavelengths[0]?.toFixed(0)}–{spectrum.wavelengths[spectrum.wavelengths.length - 1]?.toFixed(0)} nm
@@ -424,6 +503,155 @@ function SpectrumRow({
       </div>
     )}
     </li>
+  );
+}
+
+// ─── Table View ───────────────────────────────────────────────────────────────
+
+function SpectrumTableView({
+  spectra, selectedIds, onToggle, onLabelChange, onYValueChange,
+}: {
+  spectra: Spectrum[];
+  selectedIds: Set<string>;
+  onToggle: (id: string) => void;
+  onLabelChange: (id: string, label: string) => void;
+  onYValueChange: (id: string, yValue: number | undefined) => void;
+}) {
+  const [editCell, setEditCell] = useState<{ id: string; field: 'label' | 'yValue' } | null>(null);
+  const [editValue, setEditValue] = useState('');
+
+  const commitEdit = useCallback(() => {
+    if (!editCell) return;
+    if (editCell.field === 'label') {
+      onLabelChange(editCell.id, editValue.trim());
+    } else {
+      const v = editValue.trim() === '' ? undefined : parseFloat(editValue.trim());
+      onYValueChange(editCell.id, v !== undefined && isNaN(v) ? undefined : v);
+    }
+    setEditCell(null);
+  }, [editCell, editValue, onLabelChange, onYValueChange]);
+
+  const startEdit = (id: string, field: 'label' | 'yValue', currentValue: string) => {
+    setEditCell({ id, field });
+    setEditValue(currentValue);
+  };
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-xs border-collapse min-w-[520px]">
+        <thead>
+          <tr className="bg-slate-50 border-b border-slate-200 sticky top-0 z-10">
+            <th className="px-2 py-2 text-left text-slate-400 font-semibold w-6"></th>
+            <th className="px-2 py-2 text-left text-slate-500 font-semibold">Name</th>
+            <th className="px-2 py-2 text-left text-slate-500 font-semibold">Format</th>
+            <th className="px-2 py-2 text-right text-slate-500 font-semibold">λ Range (nm)</th>
+            <th className="px-2 py-2 text-right text-slate-500 font-semibold">Pts</th>
+            <th className="px-2 py-2 text-left text-slate-500 font-semibold">
+              Label
+              <span className="ml-1 text-slate-300 font-normal">✎</span>
+            </th>
+            <th className="px-2 py-2 text-left text-slate-500 font-semibold">
+              Y Value
+              <span className="ml-1 text-slate-300 font-normal">✎</span>
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {spectra.map(s => {
+            const isSelected = selectedIds.has(s.id);
+            const editingLabel = editCell?.id === s.id && editCell.field === 'label';
+            const editingYValue = editCell?.id === s.id && editCell.field === 'yValue';
+            const lambdaMin = s.wavelengths[0]?.toFixed(0) ?? '—';
+            const lambdaMax = s.wavelengths[s.wavelengths.length - 1]?.toFixed(0) ?? '—';
+
+            return (
+              <tr
+                key={s.id}
+                className={`border-b border-slate-100 hover:bg-slate-50 ${isSelected ? 'bg-blue-50/40' : ''}`}
+              >
+                {/* Checkbox + color */}
+                <td className="px-2 py-1.5 w-6">
+                  <div className="flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: s.color }} />
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => onToggle(s.id)}
+                      className="accent-blue-500"
+                    />
+                  </div>
+                </td>
+                {/* Name */}
+                <td className="px-2 py-1.5 max-w-[120px]">
+                  <span className="truncate block text-slate-700 font-medium" title={s.name}>{s.name}</span>
+                </td>
+                {/* Format */}
+                <td className="px-2 py-1.5">
+                  <span className="text-slate-400">{formatBadge(s.format)}</span>
+                </td>
+                {/* λ Range */}
+                <td className="px-2 py-1.5 text-right text-slate-400 font-mono whitespace-nowrap">
+                  {lambdaMin}–{lambdaMax}
+                </td>
+                {/* Points */}
+                <td className="px-2 py-1.5 text-right text-slate-400 font-mono">
+                  {s.wavelengths.length}
+                </td>
+                {/* Label — editable */}
+                <td className="px-2 py-1.5 min-w-[80px]" onClick={e => e.stopPropagation()}>
+                  {editingLabel ? (
+                    <input
+                      autoFocus
+                      type="text"
+                      value={editValue}
+                      placeholder="label…"
+                      onChange={e => setEditValue(e.target.value)}
+                      onBlur={commitEdit}
+                      onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') commitEdit(); }}
+                      className="w-full border border-blue-300 rounded px-1 py-0.5 focus:outline-none text-xs"
+                    />
+                  ) : (
+                    <button
+                      onClick={() => startEdit(s.id, 'label', s.label ?? '')}
+                      className={`w-full text-left px-1 py-0.5 rounded hover:bg-blue-50 transition-colors ${
+                        s.label ? 'text-slate-700' : 'text-slate-300 italic'
+                      }`}
+                    >
+                      {s.label || 'click to add…'}
+                    </button>
+                  )}
+                </td>
+                {/* Y Value — editable */}
+                <td className="px-2 py-1.5 min-w-[70px]" onClick={e => e.stopPropagation()}>
+                  {editingYValue ? (
+                    <input
+                      autoFocus
+                      type="number"
+                      value={editValue}
+                      placeholder="0"
+                      onChange={e => setEditValue(e.target.value)}
+                      onBlur={commitEdit}
+                      onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') commitEdit(); }}
+                      className="w-full border border-teal-300 rounded px-1 py-0.5 focus:outline-none text-xs font-mono"
+                    />
+                  ) : (
+                    <button
+                      onClick={() => startEdit(s.id, 'yValue', s.yValue !== undefined ? String(s.yValue) : '')}
+                      className={`w-full text-left px-1 py-0.5 rounded hover:bg-teal-50 transition-colors font-mono ${
+                        s.yValue !== undefined ? 'text-teal-700' : 'text-slate-300 italic font-sans'
+                      }`}
+                    >
+                      {s.yValue !== undefined ? s.yValue : 'click to add…'}
+                    </button>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      <p className="text-[10px] text-slate-300 px-3 py-2">Click Label or Y Value cells to edit inline.</p>
+    </div>
   );
 }
 

@@ -28,6 +28,7 @@ type Action =
   | { type: 'SET_SPECTRUM_COLOR'; id: string; color: string }
   | { type: 'RENAME_SPECTRUM'; id: string; name: string }
   | { type: 'SET_SPECTRUM_LABEL'; id: string; label: string }
+  | { type: 'SET_SPECTRUM_Y_VALUE'; id: string; yValue: number | undefined }
   | { type: 'RESTORE_FROM_DB'; spectra: Spectrum[] };
 
 function reducer(state: State, action: Action): State {
@@ -124,6 +125,13 @@ function reducer(state: State, action: Action): State {
           s.id === action.id ? { ...s, label: action.label || undefined } : s
         ),
       };
+    case 'SET_SPECTRUM_Y_VALUE':
+      return {
+        ...state,
+        spectra: state.spectra.map(s =>
+          s.id === action.id ? { ...s, yValue: action.yValue } : s
+        ),
+      };
     case 'RESTORE_FROM_DB':
       return {
         ...state,
@@ -198,6 +206,8 @@ export function useSpectra() {
       dispatch({ type: 'RENAME_SPECTRUM', id, name }),
     setSpectrumLabel: (id: string, label: string) =>
       dispatch({ type: 'SET_SPECTRUM_LABEL', id, label }),
+    setSpectrumYValue: (id: string, yValue: number | undefined) =>
+      dispatch({ type: 'SET_SPECTRUM_Y_VALUE', id, yValue }),
     duplicateSpectrum: (id: string) =>
       dispatch({ type: 'DUPLICATE_SPECTRUM', id }),
     invertSelect: () =>

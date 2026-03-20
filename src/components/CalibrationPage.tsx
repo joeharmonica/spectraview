@@ -20,6 +20,13 @@ const PlotlyLib: any = (_PlotlyRaw as any).default ?? _PlotlyRaw;
 
 const fmt = (v: number | null, d = 4) => v === null ? '—' : isNaN(v) ? 'err' : v.toFixed(d);
 
+/** Percentage error: residual / |yTrue|; uses yPred as denominator if yTrue = 0. */
+function pctError(residual: number, yTrue: number, yPred: number): number {
+  const denom = yTrue !== 0 ? Math.abs(yTrue) : Math.abs(yPred);
+  if (denom === 0) return 0;
+  return (residual / denom) * 100;
+}
+
 interface Props {
   spectra: Spectrum[];
   onClose: () => void;
@@ -394,6 +401,7 @@ function Step1Labels({
 
 function Step2Config({
   spectra, labels, features, config, onChange, selectedModels, onModelsChange,
+  perModelParams, onPerModelParamsChange,
 }: {
   spectra: Spectrum[];
   labels: SampleLabel[];
@@ -402,8 +410,12 @@ function Step2Config({
   onChange: (c: ModelConfig) => void;
   selectedModels: ModelType[];
   onModelsChange: (m: ModelType[]) => void;
+  perModelParams: Partial<Record<ModelType, { nComponents?: number; lambda?: number }>>;
+  onPerModelParamsChange: (p: Partial<Record<ModelType, { nComponents?: number; lambda?: number }>>) => void;
 }) {
   const set = (patch: Partial<ModelConfig>) => onChange({ ...config, ...patch });
+  const setModelParam = (model: ModelType, patch: { nComponents?: number; lambda?: number }) =>
+    onPerModelParamsChange({ ...perModelParams, [model]: { ...perModelParams[model], ...patch } });
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -432,10 +444,12 @@ function Step2Config({
   }, [spectra, labels]);
 
   const isMultivariate = !(features.type === 'specific_wavelengths' && features.wavelengths.length <= 1);
-  const showComponents = selectedModels.includes('pls') || selectedModels.includes('pcr');
-  const showLambda = selectedModels.includes('ridge') || selectedModels.includes('lasso');
-  // Use the first pls/pcr model for LOOCV (most relevant for component tuning)
-  const loocvModel = selectedModels.find(m => m === 'pls' || m === 'pcr') ?? null;
+  const showComponents = selectedModels.length === 1 && (selectedModels.includes('pls') || selectedModels.includes('pcr'));
+  const showLambda = selectedModels.length === 1 && (selectedModels.includes('ridge') || selectedModels.includes('lasso'));
+  // LOOCV for single-model mode only
+  const loocvModel = selectedModels.length === 1
+    ? (selectedModels.find(m => m === 'pls' || m === 'pcr') ?? null)
+    : null;
 
   const loocvData = useMemo(() => {
     if (!loocvModel) return null;
@@ -571,78 +585,53 @@ function Step2Config({
         <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-4">Parameters</h3>
         <div className="space-y-5">
 
-          {showComponents && (
-            <div>
-              <div className="flex items-center gap-1 mb-1">
-                <span className="text-sm text-slate-700 font-medium">Number of components</span>
-                <Tip text="Latent variables (PLS) or principal components (PCR) to use. Too few = underfitting; too many = overfitting. Use the LOOCV chart below to pick the elbow — the point where RMSE stops decreasing meaningfully." />
-              </div>
-              <div className="flex items-center gap-3">
-                <input type="range" min={1} max={maxComp}
-                  value={Math.min(config.nComponents, maxComp)}
-                  onChange={e => set({ nComponents: Number(e.target.value) })}
-                  className="flex-1 accent-blue-500" />
-                <span className="text-sm font-semibold text-slate-700 w-6 text-right">{Math.min(config.nComponents, maxComp)}</span>
-              </div>
-              <p className="text-xs text-slate-400 mt-1">Max {maxComp} components for this dataset ({trainSpectra.length} training samples)</p>
-
-              {loocvData && loocvData.length > 1 && (
-                <div className="mt-3 border border-slate-100 rounded-xl p-3 bg-slate-50">
-                  <p className="text-xs text-slate-500 mb-2 font-medium">
-                    LOOCV RMSE by number of components
-                    <span className="text-slate-400 font-normal ml-1">— the selected component (red dot) is highlighted</span>
-                  </p>
-                  <Plot
-                    key={Math.min(config.nComponents, maxComp)}
-                    data={[{
-                      x: loocvData.map((_, i) => i + 1),
-                      y: loocvData,
-                      type: 'scatter', mode: 'lines+markers',
-                      line: { color: '#3b82f6', width: 2 },
-                      marker: {
-                        size: loocvData.map((_, i) => i + 1 === Math.min(config.nComponents, maxComp) ? 11 : 8),
-                        color: loocvData.map((_, i) => i + 1 === Math.min(config.nComponents, maxComp) ? '#ef4444' : '#3b82f6'),
-                        line: {
-                          color: loocvData.map((_, i) => i + 1 === Math.min(config.nComponents, maxComp) ? '#b91c1c' : '#1d4ed8'),
-                          width: 1.5,
-                        },
-                      },
-                    } as Data]}
-                    layout={{
-                      height: 240, margin: { t: 12, r: 16, b: 40, l: 56 },
-                      paper_bgcolor: 'transparent', plot_bgcolor: 'transparent',
-                      xaxis: { title: { text: 'Components', font: { size: 11 } }, tickfont: { size: 11 }, dtick: 1, gridcolor: '#f1f5f9' },
-                      yaxis: { title: { text: 'LOOCV RMSE', font: { size: 11 } }, tickfont: { size: 11 }, gridcolor: '#f1f5f9' },
-                      showlegend: false,
-                    } as Partial<Layout>}
-                    config={{ displayModeBar: false, responsive: true }}
-                    style={{ width: '100%' }}
-                    useResizeHandler
-                  />
-                </div>
+          {/* Single-model mode: shared parameters */}
+          {selectedModels.length <= 1 && (
+            <>
+              {showComponents && (
+                <ComponentsControl
+                  nComponents={Math.min(config.nComponents, maxComp)}
+                  maxComp={maxComp}
+                  trainCount={trainSpectra.length}
+                  onChange={n => set({ nComponents: n })}
+                  loocvData={loocvData}
+                />
               )}
+              {showLambda && (
+                <LambdaControl
+                  lambda={config.lambda}
+                  onChange={lambda => set({ lambda })}
+                />
+              )}
+            </>
+          )}
+
+          {/* Multi-model mode: per-model sections */}
+          {selectedModels.length > 1 && (
+            <div className="space-y-4">
+              <p className="text-xs text-slate-400 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
+                <strong>Per-model parameters:</strong> Each model can be tuned independently. Auto-scale and cross-validation are shared across all models.
+              </p>
+              {selectedModels.map(m => (
+                <PerModelParamSection
+                  key={m}
+                  model={m}
+                  spectra={spectra}
+                  labels={labels}
+                  features={features}
+                  maxComp={maxComp}
+                  trainCount={trainSpectra.length}
+                  autoScale={config.autoScale}
+                  globalNComponents={config.nComponents}
+                  globalLambda={config.lambda}
+                  overrides={perModelParams[m] ?? {}}
+                  onOverrideChange={patch => setModelParam(m, patch)}
+                />
+              ))}
             </div>
           )}
 
-          {showLambda && (
-            <div>
-              <div className="flex items-center gap-1 mb-1">
-                <span className="text-sm text-slate-700 font-medium">Regularisation strength (λ)</span>
-                <Tip text="Controls how much the model is penalised for large coefficients. Higher λ = more regularisation, simpler model. Too low = overfitting; too high = underfitting. Start at λ=1 and use cross-validation RMSE to tune." />
-              </div>
-              <div className="flex items-center gap-3">
-                <input type="range" min={-3} max={3} step={0.25}
-                  value={Math.log10(config.lambda)}
-                  onChange={e => set({ lambda: Math.pow(10, Number(e.target.value)) })}
-                  className="flex-1 accent-blue-500" />
-                <span className="text-sm font-semibold text-slate-700 w-16 text-right font-mono">{config.lambda.toExponential(2)}</span>
-              </div>
-              <div className="flex justify-between text-xs text-slate-300 mt-0.5">
-                <span>0.001 (less)</span><span>1</span><span>1000 (more)</span>
-              </div>
-            </div>
-          )}
-
+          {/* Shared: auto-scale */}
           <div>
             <label className="flex items-center gap-2 cursor-pointer">
               <input type="checkbox" checked={config.autoScale}
@@ -653,6 +642,7 @@ function Step2Config({
             </label>
           </div>
 
+          {/* Shared: cross-validation */}
           <div>
             <div className="flex items-center gap-3">
               <div className="flex items-center gap-1">
@@ -674,6 +664,160 @@ function Step2Config({
           </div>
         </div>
       </section>
+    </div>
+  );
+}
+
+// ─── Reusable parameter sub-components ────────────────────────────────────────
+
+function ComponentsControl({
+  nComponents, maxComp, trainCount, onChange, loocvData,
+}: {
+  nComponents: number;
+  maxComp: number;
+  trainCount: number;
+  onChange: (n: number) => void;
+  loocvData: number[] | null;
+}) {
+  const clamped = Math.min(nComponents, maxComp);
+  return (
+    <div>
+      <div className="flex items-center gap-1 mb-1">
+        <span className="text-sm text-slate-700 font-medium">Number of components</span>
+        <Tip text="Latent variables (PLS) or principal components (PCR) to use. Too few = underfitting; too many = overfitting. Use the LOOCV chart below to pick the elbow — the point where RMSE stops decreasing meaningfully." />
+      </div>
+      <div className="flex items-center gap-3">
+        <input type="range" min={1} max={maxComp}
+          value={clamped}
+          onChange={e => onChange(Number(e.target.value))}
+          className="flex-1 accent-blue-500" />
+        <span className="text-sm font-semibold text-slate-700 w-6 text-right">{clamped}</span>
+      </div>
+      <p className="text-xs text-slate-400 mt-1">Max {maxComp} components for this dataset ({trainCount} training samples)</p>
+      {loocvData && loocvData.length > 1 && (
+        <div className="mt-3 border border-slate-100 rounded-xl p-3 bg-slate-50">
+          <p className="text-xs text-slate-500 mb-2 font-medium">
+            LOOCV RMSE by number of components
+            <span className="text-slate-400 font-normal ml-1">— the selected component (red dot) is highlighted</span>
+          </p>
+          <Plot
+            key={clamped}
+            data={[{
+              x: loocvData.map((_, i) => i + 1),
+              y: loocvData,
+              type: 'scatter', mode: 'lines+markers',
+              line: { color: '#3b82f6', width: 2 },
+              marker: {
+                size: loocvData.map((_, i) => i + 1 === clamped ? 11 : 8),
+                color: loocvData.map((_, i) => i + 1 === clamped ? '#ef4444' : '#3b82f6'),
+                line: {
+                  color: loocvData.map((_, i) => i + 1 === clamped ? '#b91c1c' : '#1d4ed8'),
+                  width: 1.5,
+                },
+              },
+            } as Data]}
+            layout={{
+              height: 200, margin: { t: 12, r: 16, b: 40, l: 56 },
+              paper_bgcolor: 'transparent', plot_bgcolor: 'transparent',
+              xaxis: { title: { text: 'Components', font: { size: 11 } }, tickfont: { size: 11 }, dtick: 1, gridcolor: '#f1f5f9' },
+              yaxis: { title: { text: 'LOOCV RMSE', font: { size: 11 } }, tickfont: { size: 11 }, gridcolor: '#f1f5f9' },
+              showlegend: false,
+            } as Partial<Layout>}
+            config={{ displayModeBar: false, responsive: true }}
+            style={{ width: '100%' }}
+            useResizeHandler
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LambdaControl({ lambda, onChange }: { lambda: number; onChange: (l: number) => void }) {
+  return (
+    <div>
+      <div className="flex items-center gap-1 mb-1">
+        <span className="text-sm text-slate-700 font-medium">Regularisation strength (λ)</span>
+        <Tip text="Controls how much the model is penalised for large coefficients. Higher λ = more regularisation, simpler model. Too low = overfitting; too high = underfitting. Start at λ=1 and use cross-validation RMSE to tune." />
+      </div>
+      <div className="flex items-center gap-3">
+        <input type="range" min={-3} max={3} step={0.25}
+          value={Math.log10(lambda)}
+          onChange={e => onChange(Math.pow(10, Number(e.target.value)))}
+          className="flex-1 accent-blue-500" />
+        <span className="text-sm font-semibold text-slate-700 w-16 text-right font-mono">{lambda.toExponential(2)}</span>
+      </div>
+      <div className="flex justify-between text-xs text-slate-300 mt-0.5">
+        <span>0.001 (less)</span><span>1</span><span>1000 (more)</span>
+      </div>
+    </div>
+  );
+}
+
+/** Per-model parameter section shown in multi-model comparison mode. */
+function PerModelParamSection({
+  model, spectra, labels, features, maxComp, trainCount, autoScale,
+  globalNComponents, globalLambda, overrides, onOverrideChange,
+}: {
+  model: ModelType;
+  spectra: Spectrum[];
+  labels: SampleLabel[];
+  features: FeatureStrategy;
+  maxComp: number;
+  trainCount: number;
+  autoScale: boolean;
+  globalNComponents: number;
+  globalLambda: number;
+  overrides: { nComponents?: number; lambda?: number };
+  onOverrideChange: (patch: { nComponents?: number; lambda?: number }) => void;
+}) {
+  const needsComponents = model === 'pls' || model === 'pcr';
+  const needsLambda = model === 'ridge' || model === 'lasso';
+  const nComp = overrides.nComponents ?? globalNComponents;
+  const lambda = overrides.lambda ?? globalLambda;
+
+  const loocvData = useMemo(() => {
+    if (!needsComponents) return null;
+    if (trainCount < 3) return null;
+    try {
+      const trainLabels = labels.filter(l => l.split === 'train' && l.yValue !== null);
+      const { X } = extractFeatures(spectra, trainLabels, features);
+      const y = trainLabels.map(l => l.yValue!);
+      const maxC = Math.min(10, trainCount - 1, X[0]?.length ?? 1);
+      if (maxC < 2) return null;
+      return loocvRmseByComponent(X, y, maxC, model, autoScale);
+    } catch { return null; }
+  }, [needsComponents, trainCount, labels, spectra, features, model, autoScale]);
+
+  return (
+    <div className="border border-slate-200 rounded-xl p-4 space-y-4">
+      <div className="flex items-center gap-2">
+        <span className="text-xs font-semibold text-slate-700 bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">
+          {MODEL_LABELS[model]}
+        </span>
+        <span className="text-xs text-slate-400">{MODEL_NAMES[model]}</span>
+      </div>
+
+      {needsComponents && (
+        <ComponentsControl
+          nComponents={nComp}
+          maxComp={maxComp}
+          trainCount={trainCount}
+          onChange={n => onOverrideChange({ nComponents: n })}
+          loocvData={loocvData}
+        />
+      )}
+
+      {needsLambda && (
+        <LambdaControl
+          lambda={lambda}
+          onChange={l => onOverrideChange({ lambda: l })}
+        />
+      )}
+
+      {!needsComponents && !needsLambda && (
+        <p className="text-xs text-slate-400 italic">No model-specific tunable parameters for MLR.</p>
+      )}
     </div>
   );
 }
@@ -868,12 +1012,48 @@ function ModelResultsPanel({
         </section>
       )}
 
+      {/* Residuals % Error chart */}
+      <section>
+        <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Percentage Errors</h4>
+        <SectionBanner
+          color="amber"
+          text="Percentage error = residual ÷ |true value| × 100%. If true value is 0, predicted value is used as denominator. Bars exceeding ±10% are flagged in red."
+        />
+        <Plot
+          data={[{
+            x: results.predictions.map(p => { const s = spectraMap.get(p.spectrumId); return s?.label || s?.name || p.spectrumId; }),
+            y: results.predictions.map(p => pctError(p.residual, p.yTrue, p.yPred)),
+            type: 'bar',
+            marker: {
+              color: results.predictions.map(p =>
+                Math.abs(pctError(p.residual, p.yTrue, p.yPred)) > 10
+                  ? '#ef4444'
+                  : p.split === 'train' ? '#3b82f6' : '#10b981'
+              ),
+            },
+            hovertemplate: '%{x}<br>% Error: %{y:.2f}%<extra></extra>',
+          } as Data]}
+          layout={{
+            autosize: true, height: 220,
+            margin: { t: 10, r: 20, b: 80, l: 70 },
+            paper_bgcolor: 'white', plot_bgcolor: '#f8fafc',
+            xaxis: { tickangle: -35, tickfont: { size: 10 }, gridcolor: '#e2e8f0' },
+            yaxis: { title: { text: '% Error', font: { size: 11 } }, gridcolor: '#e2e8f0', zeroline: true, zerolinecolor: '#94a3b8' },
+            showlegend: false,
+          } as Partial<Layout>}
+          config={{ displayModeBar: false, responsive: true }}
+          style={{ width: '100%' }}
+          useResizeHandler
+        />
+        <p className="text-xs text-slate-400 mt-1">Blue = train · Green = test · Red = &gt;±10% error</p>
+      </section>
+
       {/* Predictions table */}
       <section>
         <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Predictions</h4>
         <SectionBanner
           color="slate"
-          text="Green-highlighted rows are test samples — held out from training to evaluate real-world generalisation. Residuals shown in red exceed 2× the training RMSE and may indicate outliers or mislabelled samples."
+          text="Green-highlighted rows are test samples — held out from training to evaluate real-world generalisation. Residuals and % errors shown in red indicate outliers or mislabelled samples."
         />
         <div className="border border-slate-200 rounded-xl overflow-hidden">
           <table className="w-full text-xs">
@@ -884,29 +1064,41 @@ function ModelResultsPanel({
                 <th className="px-3 py-2 text-right font-semibold text-slate-500">{yLabel} (true)</th>
                 <th className="px-3 py-2 text-right font-semibold text-slate-500">{yLabel} (pred)</th>
                 <th className="px-3 py-2 text-right font-semibold text-slate-500">Residual</th>
+                <th className="px-3 py-2 text-right font-semibold text-slate-500">
+                  % Error
+                  <span className="ml-1 font-normal text-slate-400 text-[10px]" title="residual / |true| × 100; uses pred if true=0">ⓘ</span>
+                </th>
               </tr>
             </thead>
             <tbody>
-              {results.predictions.map((p, i) => (
-                <tr key={i} className={`border-b border-slate-50 ${p.split === 'test' ? 'bg-emerald-50/30' : ''}`}>
-                  <td className="px-3 py-1.5 text-slate-700 truncate max-w-[200px]" title={p.spectrumLabel}>{p.spectrumLabel}</td>
-                  <td className="px-3 py-1.5">
-                    <span className={`inline-block px-1.5 py-0.5 rounded text-xs font-medium
-                      ${p.split === 'train' ? 'bg-blue-100 text-blue-700' : 'bg-teal-100 text-teal-700'}`}>
-                      {p.split}
-                    </span>
-                  </td>
-                  <td className="px-3 py-1.5 text-right font-mono text-slate-700">{p.yTrue}</td>
-                  <td className="px-3 py-1.5 text-right font-mono text-slate-700">{p.yPred.toFixed(4)}</td>
-                  <td className={`px-3 py-1.5 text-right font-mono
-                    ${Math.abs(p.residual) > (results.trainRMSE ?? 0) * 2 ? 'text-red-500 font-semibold' : 'text-slate-700'}`}>
-                    {p.residual.toFixed(4)}
-                  </td>
-                </tr>
-              ))}
+              {results.predictions.map((p, i) => {
+                const pe = pctError(p.residual, p.yTrue, p.yPred);
+                const residualFlagged = Math.abs(p.residual) > (results.trainRMSE ?? 0) * 2;
+                const peFlagged = Math.abs(pe) > 10;
+                return (
+                  <tr key={i} className={`border-b border-slate-50 ${p.split === 'test' ? 'bg-emerald-50/30' : ''}`}>
+                    <td className="px-3 py-1.5 text-slate-700 truncate max-w-[180px]" title={p.spectrumLabel}>{p.spectrumLabel}</td>
+                    <td className="px-3 py-1.5">
+                      <span className={`inline-block px-1.5 py-0.5 rounded text-xs font-medium
+                        ${p.split === 'train' ? 'bg-blue-100 text-blue-700' : 'bg-teal-100 text-teal-700'}`}>
+                        {p.split}
+                      </span>
+                    </td>
+                    <td className="px-3 py-1.5 text-right font-mono text-slate-700">{p.yTrue}</td>
+                    <td className="px-3 py-1.5 text-right font-mono text-slate-700">{p.yPred.toFixed(4)}</td>
+                    <td className={`px-3 py-1.5 text-right font-mono ${residualFlagged ? 'text-red-500 font-semibold' : 'text-slate-700'}`}>
+                      {p.residual.toFixed(4)}
+                    </td>
+                    <td className={`px-3 py-1.5 text-right font-mono ${peFlagged ? 'text-red-500 font-semibold' : 'text-slate-700'}`}>
+                      {pe.toFixed(2)}%
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
+        <p className="text-xs text-slate-400 mt-1">% Error: red = &gt;±10% · Residual: red = &gt;2× train RMSE</p>
       </section>
     </div>
   );
@@ -1231,7 +1423,7 @@ function Stepper({ step, canStep2, canStep3, onNav }: {
 export function CalibrationPage({ spectra, onClose }: Props) {
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [labels, setLabels] = useState<SampleLabel[]>(() =>
-    spectra.map(s => ({ spectrumId: s.id, yValue: null, split: 'train' }))
+    spectra.map(s => ({ spectrumId: s.id, yValue: s.yValue ?? null, split: 'train' }))
   );
   const [features, setFeatures] = useState<FeatureStrategy>(DEFAULT_CONFIG.features);
   const [config, setConfig] = useState<ModelConfig>(DEFAULT_CONFIG);
@@ -1242,6 +1434,7 @@ export function CalibrationPage({ spectra, onClose }: Props) {
   const [progress, setProgress] = useState<{ current: number; total: number; label: string } | null>(null);
   const [error, setError] = useState('');
   const [yLabel, setYLabel] = useState('');
+  const [perModelParams, setPerModelParams] = useState<Partial<Record<ModelType, { nComponents?: number; lambda?: number }>>>({});
 
   const trainCount = labels.filter(l => l.split === 'train' && l.yValue !== null).length;
   const canStep2 = trainCount >= 2;
@@ -1270,7 +1463,14 @@ export function CalibrationPage({ spectra, onClose }: Props) {
           // Yield to React to paint the progress update
           await new Promise(r => setTimeout(r, 20));
           try {
-            const res = runCalibration(spectra, labels, { ...effectiveConfig, model: m, compareAll: false });
+            const modelOverrides = perModelParams[m] ?? {};
+            const res = runCalibration(spectra, labels, {
+              ...effectiveConfig,
+              model: m,
+              compareAll: false,
+              nComponents: modelOverrides.nComponents ?? effectiveConfig.nComponents,
+              lambda: modelOverrides.lambda ?? effectiveConfig.lambda,
+            });
             collected.push(res);
           } catch {
             // Skip failed model — it won't appear in tabs
@@ -1406,6 +1606,8 @@ export function CalibrationPage({ spectra, onClose }: Props) {
             onChange={setConfig}
             selectedModels={selectedModels}
             onModelsChange={setSelectedModels}
+            perModelParams={perModelParams}
+            onPerModelParamsChange={setPerModelParams}
           />
         )}
         {step === 3 && results && (
