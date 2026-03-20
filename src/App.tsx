@@ -5,13 +5,14 @@ import { SpectrumLibrary } from './components/SpectrumLibrary';
 import { ChartWorkspace } from './components/ChartWorkspace';
 import { Toolbar } from './components/Toolbar';
 import { AnalysisPanel } from './components/AnalysisPanel';
+import { AnnotationsPanel } from './components/AnnotationsPanel';
 import { ColumnMappingModal } from './components/ColumnMappingModal';
 import { PeakTableModal } from './components/PeakTableModal';
 import { Tutorial } from './components/Tutorial';
 import { CalibrationPage } from './components/CalibrationPage';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { parseFile } from './parsers';
-import type { Spectrum, ColumnMappingRequest, ProcessingOptions, HighlightedPeak } from './types/spectrum';
+import type { Spectrum, ColumnMappingRequest, ProcessingOptions, HighlightedPeak, UserAnnotation } from './types/spectrum';
 import { DEFAULT_PROCESSING } from './types/spectrum';
 
 // @ts-ignore — plotly.js-dist-min shares runtime with plotly.js but ships no .d.ts
@@ -19,7 +20,8 @@ import * as _PlotlyRaw from 'plotly.js-dist-min';
 const PlotlyLib: any = (_PlotlyRaw as any).default ?? _PlotlyRaw; // eslint-disable-line @typescript-eslint/no-explicit-any
 
 const MIN_PANEL = 180;
-const MAX_PANEL = 520;
+/** Dynamic max panel width: 50% of current viewport width */
+function getMaxPanel() { return Math.max(400, Math.round(window.innerWidth * 0.5)); }
 
 /** Attaches mousemove/mouseup listeners to resize a panel by dragging. */
 function startPanelDrag(
@@ -32,7 +34,7 @@ function startPanelDrag(
   const onMove = (ev: MouseEvent) => {
     const dx = (ev.clientX - lastX) * sign;
     lastX = ev.clientX;
-    setter(w => Math.max(MIN_PANEL, Math.min(MAX_PANEL, w + dx)));
+    setter(w => Math.max(MIN_PANEL, Math.min(getMaxPanel(), w + dx)));
   };
   const onUp = () => {
     document.removeEventListener('mousemove', onMove);
@@ -61,6 +63,7 @@ export default function App() {
     removeSpectrum, setViewMode, setStackOffset,
     updateProcessingBulk, setSpectrumColor, renameSpectrum, duplicateSpectrum,
     invertSelect, removeSelected, clearAll, setSpectrumLabel, setSpectrumYValue,
+    setSpectrumGroup,
   } = useSpectra();
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -84,6 +87,9 @@ export default function App() {
   const [analysisOpen, setAnalysisOpen] = useState(false);
   const [labelsVisible, setLabelsVisible] = useState(false);
   const [peakTableOpen, setPeakTableOpen] = useState(false);
+  const [annotationsOpen, setAnnotationsOpen] = useState(false);
+  const [annotateMode, setAnnotateMode] = useState(false);
+  const [userAnnotations, setUserAnnotations] = useState<UserAnnotation[]>([]);
   const [pendingMappings, setPendingMappings] = useState<ColumnMappingRequest[]>([]);
   const [leftWidth, setLeftWidth] = useState(288);
   const [rightWidth, setRightWidth] = useState(288);
@@ -93,8 +99,12 @@ export default function App() {
   const [dragMode, setDragMode] = useState<'zoom' | 'pan'>('zoom');
   const [tutorialOpen, setTutorialOpen] = useState(false);
   const [calibrationOpen, setCalibrationOpen] = useState(false);
+  // Incremented to tell ChartWorkspace to clear stored zoom and autorange
+  const [resetKey, setResetKey] = useState(0);
 
   const handleResetAxes = useCallback(() => {
+    // Increment resetKey so ChartWorkspace clears stored zoom, then use Plotly direct for immediate effect
+    setResetKey(k => k + 1);
     if (plotDivRef.current) {
       PlotlyLib.relayout(plotDivRef.current, { 'xaxis.autorange': true, 'yaxis.autorange': true });
     }
@@ -145,6 +155,28 @@ export default function App() {
 
   const handleMappingCancel = useCallback(() => {
     setPendingMappings(prev => prev.slice(1));
+  }, []);
+
+  const handleAnnotationAdd = useCallback((ann: Omit<UserAnnotation, 'id'>) => {
+    setUserAnnotations(prev => [...prev, { ...ann, id: crypto.randomUUID() }]);
+  }, []);
+
+  const handleAnnotationAddFromChart = useCallback((x: number) => {
+    setUserAnnotations(prev => [...prev, {
+      id: crypto.randomUUID(),
+      type: 'vline',
+      x,
+      color: '#ef4444',
+      lineStyle: 'dash',
+    }]);
+  }, []);
+
+  const handleAnnotationRemove = useCallback((id: string) => {
+    setUserAnnotations(prev => prev.filter(a => a.id !== id));
+  }, []);
+
+  const handleAnnotationUpdate = useCallback((id: string, updates: Partial<UserAnnotation>) => {
+    setUserAnnotations(prev => prev.map(a => a.id === id ? { ...a, ...updates } : a));
   }, []);
 
   const handleApplyAnalysis = useCallback((opts: ProcessingOptions) => {
@@ -246,6 +278,7 @@ export default function App() {
                     onColorChange={setSpectrumColor}
                     onLabelChange={setSpectrumLabel}
                     onYValueChange={setSpectrumYValue}
+                    onGroupChange={setSpectrumGroup}
                     onCollapse={() => setLibraryOpen(false)}
                   />
                 </div>
@@ -284,12 +317,14 @@ export default function App() {
               analysisOpen={analysisOpen}
               labelsVisible={labelsVisible}
               peakTableOpen={peakTableOpen}
+              annotationsOpen={annotationsOpen}
               dragMode={dragMode}
               onSetViewMode={setViewMode}
               onSetStackOffset={setStackOffset}
               onToggleAnalysis={() => setAnalysisOpen(o => !o)}
               onToggleLabels={() => setLabelsVisible(v => !v)}
               onTogglePeakTable={() => setPeakTableOpen(o => !o)}
+              onToggleAnnotations={() => setAnnotationsOpen(o => !o)}
               onSetDragMode={setDragMode}
               onResetAxes={handleResetAxes}
               onDownloadPNG={handleDownloadPNG}
@@ -306,7 +341,11 @@ export default function App() {
                   stackOffset={stackOffset}
                   showLabels={labelsVisible}
                   highlightedPeaks={highlightedPeaks}
+                  userAnnotations={userAnnotations}
                   dragMode={dragMode}
+                  annotateMode={annotateMode}
+                  onAnnotationAdd={handleAnnotationAddFromChart}
+                  resetKey={resetKey}
                   onPlotInit={div => { plotDivRef.current = div; }}
                 />
               </ErrorBoundary>
@@ -341,6 +380,37 @@ export default function App() {
                     onApply={handleApplyAnalysis}
                     onReset={handleResetAnalysis}
                     onClose={() => setAnalysisOpen(false)}
+                  />
+                </div>
+              </>
+            )}
+
+            {/* Annotations panel — right sidebar */}
+            {hasSpectra && annotationsOpen && (
+              <>
+                {isSmall && (
+                  <div
+                    className="fixed inset-0 bg-black/40 z-40"
+                    onClick={() => setAnnotationsOpen(false)}
+                  />
+                )}
+                {!isSmall && !analysisOpen && <DragHandle onMouseDown={e => startPanelDrag(e, setRightWidth, -1)} />}
+                <div
+                  className={
+                    isSmall
+                      ? 'fixed inset-y-0 right-0 z-50 w-80 flex-shrink-0 shadow-2xl'
+                      : 'flex-shrink-0 min-h-0'
+                  }
+                  style={isSmall ? undefined : { width: rightWidth }}
+                >
+                  <AnnotationsPanel
+                    annotations={userAnnotations}
+                    annotateMode={annotateMode}
+                    onToggleAnnotateMode={() => setAnnotateMode(m => !m)}
+                    onAdd={handleAnnotationAdd}
+                    onRemove={handleAnnotationRemove}
+                    onUpdate={handleAnnotationUpdate}
+                    onClose={() => { setAnnotationsOpen(false); setAnnotateMode(false); }}
                   />
                 </div>
               </>
@@ -382,7 +452,7 @@ export default function App() {
       <input
         ref={fileInputRef}
         type="file"
-        accept=".csv,.xlsx"
+        accept=".csv,.xlsx,.xls"
         multiple
         className="hidden"
         onChange={handleFileInput}

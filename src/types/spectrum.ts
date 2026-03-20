@@ -1,4 +1,4 @@
-export type SpectrumFormat = 'cary3500' | 'rf6000_2d' | 'rf6000_3d' | 'r1f' | 'unknown';
+export type SpectrumFormat = 'cary3500' | 'rf6000_2d' | 'rf6000_3d' | 'r1f' | 'unknown' | 'spectraview';
 
 export type ViewMode = 'overlap' | 'stacked' | 'heatmap';
 
@@ -31,6 +31,21 @@ export interface Spectrum {
   label?: string;
   /** User-defined reference Y value for calibration (e.g. concentration). Pre-fills Step 1. */
   yValue?: number;
+  /** User-defined group name for grouping in the library table view. */
+  group?: string;
+}
+
+/** A user-drawn annotation on the chart (vertical line, horizontal line, or text). */
+export interface UserAnnotation {
+  id: string;
+  type: 'vline' | 'hline' | 'text';
+  /** Wavelength (x position) for vline / text. */
+  x: number;
+  /** Intensity (y position) for hline / text. */
+  y?: number;
+  label?: string;
+  color: string;
+  lineStyle: 'solid' | 'dash' | 'dot';
 }
 
 /** A peak selected by the user in the Peak Table to be highlighted on the chart. */

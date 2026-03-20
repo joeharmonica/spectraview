@@ -1,10 +1,12 @@
 import Papa from 'papaparse';
+import * as XLSX from 'xlsx';
 import type { Spectrum, ColumnMappingRequest } from '../types/spectrum';
 import { DEFAULT_PROCESSING } from '../types/spectrum';
 import { parseCary3500 } from './cary3500';
 import { parseRF6000_2D } from './rf6000_2d';
 import { parseRF6000_3D } from './rf6000_3d';
 import { parseR1F } from './r1f';
+import { parseSpectraViewExport } from './spectraview_export';
 
 export interface ParseResult {
   spectra: Spectrum[];
@@ -32,8 +34,11 @@ export function isExEmAxisLabel(cell: string): boolean {
   return s === '' || s === 'ex' || s === 'em/ex' || (s.includes('ex') && s.includes('em'));
 }
 
-export function detectFormat(rows: string[][]): 'cary3500' | 'rf6000_2d' | 'rf6000_3d' | 'r1f' | 'unknown' {
+export function detectFormat(rows: string[][]): 'cary3500' | 'rf6000_2d' | 'rf6000_3d' | 'r1f' | 'unknown' | 'spectraview' {
   if (rows.length === 0) return 'unknown';
+
+  // SpectraView round-trip export: first cell is ##SpectraView
+  if ((rows[0]?.[0] ?? '').trim() === '##SpectraView') return 'spectraview';
 
   const header = rows[0].map(h => h.trim().toLowerCase());
 
@@ -167,14 +172,37 @@ function finalize(partials: Omit<Spectrum, 'id' | 'color'>[]): Spectrum[] {
   }));
 }
 
+/** Convert an Excel file (xls / xlsx) to a CSV-style rows array via SheetJS. */
+async function excelToRows(file: File): Promise<string[][]> {
+  const buffer = await file.arrayBuffer();
+  const workbook = XLSX.read(buffer, { type: 'array', cellText: true, cellDates: false });
+  const sheetName = workbook.SheetNames[0];
+  if (!sheetName) return [];
+  const sheet = workbook.Sheets[sheetName]!;
+  // Convert sheet to CSV then re-parse so downstream detectors get the same string[][] shape
+  const csv = XLSX.utils.sheet_to_csv(sheet, { blankrows: true });
+  const result = Papa.parse<string[]>(csv, { skipEmptyLines: false });
+  return result.data as string[][];
+}
+
 export async function parseFile(file: File): Promise<ParseResult> {
-  const text = await file.text();
-  const result = Papa.parse<string[]>(text, { skipEmptyLines: false });
-  const rows = result.data as string[][];
+  const isExcel = /\.(xlsx|xls)$/i.test(file.name);
+  let rows: string[][];
+  if (isExcel) {
+    rows = await excelToRows(file);
+  } else {
+    const text = await file.text();
+    const result = Papa.parse<string[]>(text, { skipEmptyLines: false });
+    rows = result.data as string[][];
+  }
   const format = detectFormat(rows);
 
   if (format === 'unknown') {
     return { spectra: [], mappingRequest: buildMappingRequest(file, rows) };
+  }
+
+  if (format === 'spectraview') {
+    return { spectra: parseSpectraViewExport(rows, file.name) };
   }
 
   let partials: Omit<Spectrum, 'id' | 'color'>[];

@@ -15,32 +15,47 @@ const STEPS: Step[] = [
   {
     targetId: 'tutorial-library',
     title: 'Spectrum Library',
-    body: 'Drag-and-drop or click "+ Add" to load CSV/XLSX files. Check a spectrum to plot it; uncheck to hide it. Search, filter by format, and sort by name or wavelength. Double-click a name to rename it. Click the colour swatch to change the plot colour. The "←" button collapses this panel for more chart space.',
+    body: 'Drag-and-drop or click "+ Add" to load CSV/XLSX files. Check a spectrum to plot it; uncheck to hide it. Double-click a name to rename it. Click the colour swatch to change the plot colour. The panel is resizable — drag its right edge up to 50 % of screen width for more room. The "←" button collapses it; re-expand via the ">" bar.',
   },
   {
     targetId: 'tutorial-library',
-    title: 'Custom Chart Labels',
-    body: 'Each row shows a coloured pill — the "+ label" pill (dashed border) or a filled pill if a label is already set. Click it to type a custom name. This label appears in the chart legend, tooltips, and peak table instead of the filename.',
+    title: 'Search & Multi-Term Filter',
+    body: 'Type in the search box to filter by name or filename. Click the "T+" button to enable multi-term mode: enter space-separated terms and every term must match (AND logic). Example: "uv 300" shows only spectra whose name or filename contains both "uv" and "300". Format filter chips appear when you have spectra from multiple instruments.',
+  },
+  {
+    targetId: 'tutorial-library',
+    title: 'Custom Labels & Y Values',
+    body: 'Each row has a coloured "+ label" pill — click it to set a display name shown in the chart legend and tooltips instead of the filename. The teal "+ Y value" pill stores a reference value (e.g. concentration) that auto-populates Step 1 of Calibration.',
+  },
+  {
+    targetId: 'tutorial-library',
+    title: 'Table View — Sort, Resize & Group',
+    body: 'Click the grid icon in the library header to switch to table view. Click any column header to sort (↑ ascending, ↓ descending). Drag the right edge of a column header to resize it. Edit the Group cell on any row to assign a group name — rows are then clustered under collapsible group headers. Click a group header row to expand or collapse it.',
   },
   {
     targetId: 'tutorial-view-mode',
     title: 'View Modes',
-    body: 'Overlap: all spectra share one Y-axis. Stacked: spectra are offset vertically — drag the Offset slider to control spacing. Heatmap: builds an EEM 2D colour map (Viridis scale) from 3D fluorescence data; requires ≥ 2 rf6000_3d spectra. Hover on the heatmap to preview the emission slice below the chart.',
+    body: 'Overlap: all spectra share one Y-axis. Stacked: spectra are offset vertically — drag the Offset slider to control spacing. Heatmap: builds an EEM 2D colour map (Viridis scale) from 3D fluorescence data; requires ≥ 2 rf6000_3d spectra. Hover on the heatmap to preview the emission slice in the resizable panel below the chart.',
   },
   {
     targetId: 'tutorial-chart-controls',
-    title: 'Chart Controls',
-    body: 'Zoom (default): drag to draw a zoom box. Pan: drag to scroll the chart. Both support scroll-wheel zoom. Reset fits all loaded data back into view. Download saves the chart as a high-resolution PNG (1200 × 800 px, 2×). Double-click the chart to reset axes.',
+    title: 'Chart Controls & Zoom Persistence',
+    body: 'Zoom (default): drag to draw a zoom box. Pan: drag to scroll. Both support scroll-wheel zoom. The chart remembers your zoom even when you select or deselect spectra or edit values — your view is not reset by library changes. Reset (⤢) clears the stored zoom and fits all data back into view. Download saves a 1200 × 800 px PNG at 2×.',
   },
   {
     targetId: 'tutorial-peaks-btn',
     title: 'Peak Table',
-    body: 'Detects local maxima across all selected spectra. Filter by prominence % (relative to each spectrum\'s maximum) or by absolute minimum intensity. Click the bookmark icon on any row to mark that peak on the chart with a labelled dotted line. Click "Clear markers" in the footer to remove all marks.',
+    body: 'Detects local maxima across all selected spectra. Filter by prominence % (relative to each spectrum\'s maximum) or by absolute minimum intensity. Click the bookmark icon on any row to mark that peak on the chart with a labelled dotted line. Click "Clear markers" to remove all marks.',
   },
   {
     targetId: 'tutorial-labels-btn',
     title: 'Peak Annotations',
-    body: 'Toggles name + wavelength callout labels at each spectrum\'s dominant peak directly on the chart. Labels show the custom label (or filename) alongside the peak wavelength in nm. Useful for quick slide-ready chart exports.',
+    body: 'Toggles name + wavelength callout labels at each spectrum\'s dominant peak. Labels show the custom label (or filename) alongside the peak wavelength in nm — handy for slide-ready chart exports.',
+  },
+  {
+    targetId: 'tutorial-annotations-btn',
+    title: 'Draw & Annotations',
+    body: 'Click Draw to open the Annotations panel. Add vertical lines (ideal for marking peak wavelengths), horizontal lines, or text labels — choose position, colour, and line style (solid / dash / dot). Enable "Drawing" mode in the panel then click anywhere on the chart to drop a vertical marker instantly. Edit or delete any annotation from the list.',
   },
   {
     targetId: 'tutorial-analysis-btn',
@@ -49,28 +64,28 @@ const STEPS: Step[] = [
   },
   {
     targetId: 'tutorial-csv-btn',
-    title: 'Export & Data Persistence',
-    body: 'CSV exports the processed intensities for all selected spectra (one file per spectrum). Your loaded spectra and processing settings are automatically saved to IndexedDB — they\'ll be here next time you open the app. Use "Clear all" in the library to reset.',
+    title: 'CSV Export & Round-Trip Import',
+    body: 'CSV exports processed intensities for all selected spectra. The file includes a SpectraView metadata header with each spectrum\'s name, label, Y value, and group — so re-importing the same CSV file fully restores all metadata and grouping automatically. Spectra and processing settings are also auto-saved to IndexedDB and restored on your next visit.',
   },
   {
     targetId: null,
     title: 'Calibration & Modelling',
-    body: 'Build quantitative spectral models to predict concentration, pH, or any measurable property. Click the Calibration button to open the 3-step wizard: (1) Define Variables — choose spectral features and enter known Y values. (2) Configure Model — pick one or more algorithms from the dropdown, tune parameters. (3) Review Results — metrics, plots, and downloadable report.',
+    body: 'Build quantitative spectral models to predict concentration, pH, or any measurable property. Click the Calibration button to open the 3-step wizard: (1) Define Variables — choose spectral features and enter known Y values (or use the Y value pills in the library to pre-fill them). (2) Configure Model — pick one or more algorithms. (3) Review Results — metrics, plots, and downloadable report.',
   },
   {
     targetId: null,
     title: 'Spectral Input Features (X)',
-    body: 'Three input modes: Single wavelength — intensity at one nm point, ideal for Beer-Lambert calibrations (univariate; shows Pearson r and slope). Full spectrum — all wavelengths, best with PLS-R or PCR. Multiple wavelength ranges — one or more nm windows concatenated as features; use "+ Add range" to focus on known absorption bands.',
+    body: 'Three input modes: Single wavelength — intensity at one nm point, ideal for Beer-Lambert calibrations (shows Pearson r and slope). Full spectrum — all wavelengths, best with PLS-R or PCR. Multiple wavelength ranges — one or more nm windows concatenated as features; use "+ Add range" to focus on known absorption bands.',
   },
   {
     targetId: null,
     title: 'Model Results & Comparison',
-    body: 'Select two or more models in the dropdown to run a comparison. Models run sequentially with a live progress bar. Results open with an Overview tab showing the ranked comparison table (★ best = highest test R²; ← your pick = your first selection) and R² chart. Each model gets its own tab with full results. Download a full HTML report covering all models.',
+    body: 'Select two or more models to run a comparison. Models run sequentially with a live progress bar. Results open with an Overview tab showing the ranked comparison table (★ best = highest test R²; ← your pick) and R² chart. Each model gets its own tab with full results including % error chart and predictions table. Download a full HTML report covering all models.',
   },
   {
     targetId: null,
     title: "You're all set!",
-    body: 'Click the ? button in the header any time to replay this tour. Hover the ? icons throughout the app for contextual tips on every feature. On smaller screens, use the ☰ button in the header to open the library drawer.',
+    body: 'Click the ? button in the header any time to replay this tour. Hover the ? icons throughout the app for contextual tips. On smaller screens, use the ☰ button in the header to open the library drawer. Keyboard shortcut: ← → arrow keys navigate this tour.',
   },
 ];
 

@@ -1,5 +1,36 @@
 # SpectraView Task List
 
+---
+
+## Phase 9 — Bug Fixes & Enhancements (2026-03-20)
+
+### Fix 1 — Revert annotate-mode dragmode change (crosshair)
+**Root cause:** `dragmode: annotateMode ? 'select' : dragMode` overrides the user's chosen Zoom/Pan mode when the annotations panel is open, breaking the chart interaction. The `cursor: crosshair` style also fires on the wrong element.
+**Fix:** Always pass `dragMode` to Plotly. Remove cursor override from `<Plot>` style. Click-to-annotate still works via `onClick` regardless of drag mode.
+- [x] ChartWorkspace.tsx: revert dragmode line, remove cursor style
+
+### Fix 2 — Grouping in list view
+**Root cause:** Group headers with collapse/expand only exist in `SpectrumTableView`. The default list view renders a flat `<ul>` ignoring the `group` field.
+**Fix:** In the list-view branch of SpectrumLibrary, compute group buckets from `filtered` and render collapsible group header items before each group's rows. Ungrouped spectra render without a header. Uses existing `SpectrumRow` unchanged.
+- [x] SpectrumLibrary.tsx: new ListViewGrouped component, group headers with collapse/expand
+
+### Fix 3 — Crop range reflected in chart x-axis
+**Root cause:** `ChartWorkspace` useMemo computes `displayIntensities` (cropped length) but still passes the full `s.wavelengths` array as `x` to the Plotly trace. When crop is active the array lengths diverge, causing the spectrum to plot incorrectly across the full original x range.
+**Fix:** Add `displayWavelengths` to the processed useMemo — filter `s.wavelengths` to `[minWl, maxWl]` when `s.processing.crop` is set. Use `displayWavelengths` as trace `x`.
+- [x] ChartWorkspace.tsx: compute displayWavelengths, use in traces and peak annotations
+
+### Fix 4 — Excel (xls/xlsx) file import
+- [x] `npm install xlsx` (SheetJS 0.18.5)
+- [x] parsers/index.ts: excelToRows() + isExcel branch in parseFile
+- [x] DropZone.tsx: accept `.csv,.xlsx,.xls`, regex filter updated
+- [x] App.tsx: hidden file input accept updated
+
+### Verification
+- [x] npm run build — TypeScript clean
+- [x] npm test — 164/164 passing (11 new tests in phase9_fixes.test.ts)
+
+---
+
 ## Phase 1 MVP
 
 ### Setup
@@ -185,6 +216,51 @@ Bottom emission slice panel is now height-adjustable via drag handle. Mirrors le
 - [ ] Manual: multi-model step 2 shows per-model params
 - [ ] Manual: Y value pill persists and pre-fills calibration
 - [ ] Manual: table view toggle + inline editing works
+
+---
+
+---
+
+## Phase 8 — 8 New Features (2026-03-20)
+
+### F1 — Library panel expands to 50% width
+- [x] App.tsx: getMaxPanel() returns `Math.max(400, Math.round(window.innerWidth * 0.5))`
+
+### F2 — Multi-term search in library
+- [x] SpectrumLibrary.tsx: `multiTerm` toggle (T+ button), split search by whitespace, AND logic
+
+### F3 — Table header: sort & filter
+- [x] SpectrumLibrary.tsx: ThResize component with clickable sort headers wired to sortKey state
+- [x] Format chips visible in both list and table view mode
+
+### F4 — Table column resizing
+- [x] SpectrumLibrary.tsx: colWidths state + colgroup + drag handle on each th right border
+
+### F5 — Grouping with expand/collapse
+- [x] types/spectrum.ts: added `group?: string`
+- [x] useSpectra.ts: SET_SPECTRUM_GROUP action + setSpectrumGroup hook method
+- [x] SpectrumLibrary.tsx: Group column (editable inline) + group header rows + collapsedGroups state
+- [x] App.tsx: wired setSpectrumGroup → onGroupChange prop
+
+### F6 — CSV round-trip export/import
+- [x] types/spectrum.ts: added 'spectraview' to SpectrumFormat
+- [x] parsers/spectraview_export.ts: new parser detecting ##SpectraView,v1 header
+- [x] parsers/index.ts: detects 'spectraview' format first in detectFormat
+- [x] Toolbar.tsx: exportCSV writes ##SpectraView header + #Name/#Label/#YValue/#Group rows
+
+### F7 — Annotations / draw lines on chart
+- [x] types/spectrum.ts: added UserAnnotation interface (vline/hline/text + label/color/lineStyle)
+- [x] App.tsx: userAnnotations state, annotateMode, annotationsOpen, all handlers
+- [x] ChartWorkspace.tsx: userAnnotations prop, onClick annotate mode, renders as Plotly shapes
+- [x] components/AnnotationsPanel.tsx: panel with add form, color/style pickers, list with delete
+
+### F8 — Preserve zoom on library changes
+- [x] App.tsx: resetKey state, handleResetAxes increments resetKey + calls Plotly.relayout
+- [x] ChartWorkspace.tsx: zoomRef captures onRelayout events, applies stored range to layout
+
+### Verification
+- [x] npm run build — TypeScript clean, no errors
+- [x] npm test — 153/153 passing (11 new tests added in phase8_features.test.ts)
 
 ---
 

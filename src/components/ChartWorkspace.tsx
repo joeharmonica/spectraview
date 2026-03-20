@@ -1,4 +1,4 @@
-import { useMemo, useState, useCallback } from 'react';
+import { useMemo, useState, useCallback, useRef } from 'react';
 import _PlotImport from 'react-plotly.js';
 import type { Data, Layout, Config, Annotations, Shape } from 'plotly.js';
 
@@ -17,7 +17,10 @@ if (typeof Plot !== 'function') {
   );
 }
 
-import type { Spectrum, ViewMode, HighlightedPeak } from '../types/spectrum';
+const MIN_BOTTOM = 64;
+const MAX_BOTTOM = 400;
+
+import type { Spectrum, ViewMode, HighlightedPeak, UserAnnotation } from '../types/spectrum';
 import { applyProcessing } from '../lib/processing';
 
 interface Props {
@@ -26,24 +29,66 @@ interface Props {
   stackOffset: number;
   showLabels: boolean;
   highlightedPeaks?: HighlightedPeak[];
+  userAnnotations?: UserAnnotation[];
   /** Drag mode controlled by parent (Toolbar) */
   dragMode: 'zoom' | 'pan';
+  /** Annotate mode — clicking on chart adds a vertical line annotation */
+  annotateMode?: boolean;
+  /** Called when user clicks chart in annotate mode with the x (wavelength) value */
+  onAnnotationAdd?: (x: number) => void;
+  /** Incremented by parent when "Reset Axes" is clicked — clears stored zoom */
+  resetKey?: number;
   /** Called once the Plotly graphDiv is ready — parent uses it for reset/download */
   onPlotInit: (div: HTMLElement) => void;
 }
 
 export function ChartWorkspace({
   spectra, viewMode, stackOffset, showLabels,
-  highlightedPeaks = [], dragMode, onPlotInit,
+  highlightedPeaks = [], userAnnotations = [], dragMode,
+  annotateMode = false, onAnnotationAdd, resetKey = 0, onPlotInit,
 }: Props) {
   const [hoveredEx, setHoveredEx] = useState<number | null>(null);
+  const [bottomHeight, setBottomHeight] = useState(112); // default matches old h-28
+  const bottomLastY = useRef(0);
+
+  // Zoom preservation: store current x/y ranges across re-renders
+  type ZoomState = { x: [number, number]; y: [number, number] };
+  const zoomRef = useRef<ZoomState | null>(null);
+  const lastResetKey = useRef(resetKey);
+
+  // When resetKey increments, clear stored zoom synchronously during render
+  // (must happen before storedZoom is read below, so useEffect is too late)
+  if (resetKey !== lastResetKey.current) {
+    zoomRef.current = null;
+    lastResetKey.current = resetKey;
+  }
+
+  const startBottomDrag = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    bottomLastY.current = e.clientY;
+    const onMove = (ev: MouseEvent) => {
+      const dy = bottomLastY.current - ev.clientY; // drag up → dy > 0 → taller
+      bottomLastY.current = ev.clientY;
+      setBottomHeight(h => Math.max(MIN_BOTTOM, Math.min(MAX_BOTTOM, h + dy)));
+    };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }, []);
 
   // Memoize expensive processing — only reruns when spectrum data or processing options change
   const processed = useMemo(() =>
-    spectra.map(s => ({
-      ...s,
-      displayIntensities: applyProcessing(s.wavelengths, s.intensities, s.processing),
-    })),
+    spectra.map(s => {
+      const displayIntensities = applyProcessing(s.wavelengths, s.intensities, s.processing);
+      // When crop is active, the wavelength array must also be sliced to match the cropped intensities
+      const displayWavelengths = s.processing.crop
+        ? s.wavelengths.filter(w => w >= s.processing.crop!.minWl && w <= s.processing.crop!.maxWl)
+        : s.wavelengths;
+      return { ...s, displayWavelengths, displayIntensities };
+    }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [spectra],
   );
@@ -83,7 +128,7 @@ export function ChartWorkspace({
       const yOffset = viewMode === 'stacked' ? i * stackOffset * yMaxAll : 0;
       const displayName = s.label || s.name;
       return {
-        x: s.wavelengths,
+        x: s.displayWavelengths,
         y: s.displayIntensities.map(v => v + yOffset),
         type: 'scatter',
         mode: 'lines',
@@ -102,7 +147,7 @@ export function ChartWorkspace({
           s.displayIntensities.forEach((v, idx) => {
             if (v > peakVal) { peakVal = v; peakIdx = idx; }
           });
-          const peakX = s.wavelengths[peakIdx] ?? 0;
+          const peakX = s.displayWavelengths[peakIdx] ?? 0;
           const peakY = (s.displayIntensities[peakIdx] ?? 0) + yOffset;
           return {
             x: peakX, y: peakY,
@@ -150,6 +195,35 @@ export function ChartWorkspace({
     if (viewMode === 'heatmap') setHoveredEx(null);
   }, [viewMode]);
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const handleRelayout = useCallback((event: any) => {
+    // Capture zoom state when user pans/zooms
+    if (event['xaxis.range[0]'] !== undefined && event['xaxis.range[1]'] !== undefined) {
+      zoomRef.current = {
+        x: [event['xaxis.range[0]'], event['xaxis.range[1]']],
+        y: zoomRef.current?.y ?? [0, 1],
+      };
+    }
+    if (event['yaxis.range[0]'] !== undefined && event['yaxis.range[1]'] !== undefined) {
+      zoomRef.current = {
+        x: zoomRef.current?.x ?? [0, 1],
+        y: [event['yaxis.range[0]'], event['yaxis.range[1]']],
+      };
+    }
+    // User reset zoom via Plotly UI (double-click etc.)
+    if (event['xaxis.autorange'] === true || event['yaxis.autorange'] === true) {
+      zoomRef.current = null;
+    }
+  }, []);
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const handleClick = useCallback((event: any) => {
+    if (annotateMode && onAnnotationAdd && event.points?.length > 0) {
+      const x = event.points[0].x as number;
+      onAnnotationAdd(x);
+    }
+  }, [annotateMode, onAnnotationAdd]);
+
   if (spectra.length === 0) {
     return (
       <div className="flex-1 flex items-center justify-center text-slate-300 text-sm">
@@ -157,6 +231,53 @@ export function ChartWorkspace({
       </div>
     );
   }
+
+  // Build xaxis / yaxis with stored zoom range if available
+  const storedZoom = zoomRef.current;
+  const xaxisRange = storedZoom ? { range: storedZoom.x, autorange: false as const } : { autorange: true as const };
+  const yaxisRange = storedZoom ? { range: storedZoom.y, autorange: false as const } : { autorange: true as const };
+
+  // Convert user annotations to Plotly shapes + annotation labels
+  const userShapes: Partial<Shape>[] = userAnnotations.flatMap((ann): Partial<Shape>[] => {
+    const dashStyle = ann.lineStyle as 'solid' | 'dash' | 'dot';
+    if (ann.type === 'vline') {
+      return [{
+        type: 'line' as const,
+        x0: ann.x, x1: ann.x,
+        y0: 0, y1: 1,
+        yref: 'paper' as const,
+        line: { color: ann.color, width: 1.5, dash: dashStyle },
+      } as Partial<Shape>];
+    }
+    if (ann.type === 'hline' && ann.y !== undefined) {
+      return [{
+        type: 'line' as const,
+        x0: 0, x1: 1,
+        xref: 'paper' as const,
+        y0: ann.y, y1: ann.y,
+        line: { color: ann.color, width: 1.5, dash: dashStyle },
+      } as Partial<Shape>];
+    }
+    return [];
+  });
+
+  const userAnnotationLabels: Partial<Annotations>[] = userAnnotations
+    .filter(ann => ann.label)
+    .map(ann => ({
+      x: ann.x,
+      y: ann.y !== undefined ? ann.y : 1,
+      xref: 'x' as const,
+      yref: ann.y !== undefined ? 'y' as const : 'paper' as const,
+      text: ann.label!,
+      showarrow: false,
+      font: { size: 10, color: ann.color },
+      xanchor: 'center' as const,
+      yanchor: 'bottom' as const,
+      bgcolor: 'rgba(255,255,255,0.85)',
+      bordercolor: ann.color,
+      borderwidth: 1,
+      borderpad: 2,
+    }));
 
   const layout: Partial<Layout> = {
     autosize: true,
@@ -169,12 +290,14 @@ export function ChartWorkspace({
       gridcolor: '#e2e8f0',
       showgrid: true,
       zeroline: false,
+      ...xaxisRange,
     },
     yaxis: {
       title: { text: viewMode === 'heatmap' ? 'Excitation Wavelength (nm)' : 'Intensity', font: { size: 12 } },
       gridcolor: '#e2e8f0',
       showgrid: true,
       zeroline: false,
+      ...yaxisRange,
     },
     showlegend: viewMode !== 'heatmap',
     legend: {
@@ -186,6 +309,7 @@ export function ChartWorkspace({
     hovermode: 'closest',
     annotations: [
       ...annotations,
+      ...userAnnotationLabels,
       ...highlightedPeaks.map(p => ({
         x: p.wavelength,
         y: 1,
@@ -202,13 +326,16 @@ export function ChartWorkspace({
         borderpad: 2,
       } as Partial<Annotations>)),
     ],
-    shapes: highlightedPeaks.map(p => ({
-      type: 'line' as const,
-      x0: p.wavelength, x1: p.wavelength,
-      y0: 0, y1: 1,
-      yref: 'paper' as const,
-      line: { color: p.color, width: 1.5, dash: 'dot' as const },
-    } as Partial<Shape>)),
+    shapes: [
+      ...userShapes,
+      ...highlightedPeaks.map(p => ({
+        type: 'line' as const,
+        x0: p.wavelength, x1: p.wavelength,
+        y0: 0, y1: 1,
+        yref: 'paper' as const,
+        line: { color: p.color, width: 1.5, dash: 'dot' as const },
+      } as Partial<Shape>)),
+    ],
   };
 
   const config: Partial<Config> = {
@@ -239,13 +366,22 @@ export function ChartWorkspace({
             onInitialized={(_, div) => onPlotInit(div)}
             onHover={handleHover}
             onUnhover={handleUnhover}
+            onRelayout={handleRelayout}
+            onClick={handleClick}
           />
         </div>
       </div>
 
       {/* Heatmap hover preview — shows the emission slice at the hovered excitation row */}
       {viewMode === 'heatmap' && (
-        <div className="flex-shrink-0 h-28 border-t border-slate-200 bg-white px-4 py-2">
+        <>
+          {/* Vertical drag handle — drag up to grow panel, drag down to shrink */}
+          <div
+            onMouseDown={startBottomDrag}
+            className="flex-shrink-0 h-1 bg-slate-200 hover:bg-blue-300 cursor-row-resize transition-colors"
+            title="Drag to resize emission slice panel"
+          />
+        <div className="flex-shrink-0 border-t border-slate-200 bg-white px-4 py-2 overflow-hidden" style={{ height: bottomHeight }}>
           {hoveredSlice ? (
             <div className="h-full flex flex-col gap-0.5">
               <span className="text-xs text-slate-400 flex-shrink-0">
@@ -264,6 +400,7 @@ export function ChartWorkspace({
             </div>
           )}
         </div>
+        </>
       )}
     </div>
   );

@@ -14,7 +14,7 @@ export function DropZone({ onFilesDropped }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
 
   const processFiles = useCallback(async (files: File[]) => {
-    const csvFiles = files.filter(f => f.name.endsWith('.csv') || f.name.endsWith('.xlsx'));
+    const csvFiles = files.filter(f => /\.(csv|xlsx|xls)$/i.test(f.name));
     if (csvFiles.length === 0) {
       setError('Please drop CSV files.');
       return;
@@ -53,7 +53,7 @@ export function DropZone({ onFilesDropped }: Props) {
       onDragLeave={onDragLeave}
       onClick={() => inputRef.current?.click()}
     >
-      <input ref={inputRef} type="file" accept=".csv,.xlsx" multiple className="hidden" onChange={onFileChange} />
+      <input ref={inputRef} type="file" accept=".csv,.xlsx,.xls" multiple className="hidden" onChange={onFileChange} />
 
       {isLoading ? (
         <div className="flex flex-col items-center gap-3 text-blue-500">
@@ -69,7 +69,7 @@ export function DropZone({ onFilesDropped }: Props) {
           <div className="text-center">
             <p className="text-lg font-semibold text-slate-500">Drop spectra files here</p>
             <p className="text-sm mt-1">or click to browse</p>
-            <p className="text-xs mt-2 text-slate-300">Supports CSV from Cary 3500, RF-6000 (2D/3D), R1F</p>
+            <p className="text-xs mt-2 text-slate-300">Supports CSV/XLSX/XLS from Cary 3500, RF-6000 (2D/3D), R1F</p>
           </div>
           {error && (
             <p className="text-sm text-red-500 bg-red-50 border border-red-200 rounded px-3 py-1 pointer-events-auto">

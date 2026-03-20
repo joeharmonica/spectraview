@@ -8,12 +8,14 @@ interface Props {
   analysisOpen: boolean;
   labelsVisible: boolean;
   peakTableOpen: boolean;
+  annotationsOpen: boolean;
   dragMode: 'zoom' | 'pan';
   onSetViewMode: (mode: ViewMode) => void;
   onSetStackOffset: (offset: number) => void;
   onToggleAnalysis: () => void;
   onToggleLabels: () => void;
   onTogglePeakTable: () => void;
+  onToggleAnnotations: () => void;
   onSetDragMode: (mode: 'zoom' | 'pan') => void;
   onResetAxes: () => void;
   onDownloadPNG: () => void;
@@ -22,9 +24,9 @@ interface Props {
 
 export function Toolbar({
   viewMode, stackOffset, selectedSpectra,
-  analysisOpen, labelsVisible, peakTableOpen, dragMode,
+  analysisOpen, labelsVisible, peakTableOpen, annotationsOpen, dragMode,
   onSetViewMode, onSetStackOffset, onToggleAnalysis, onToggleLabels, onTogglePeakTable,
-  onSetDragMode, onResetAxes, onDownloadPNG, onOpenCalibration,
+  onToggleAnnotations, onSetDragMode, onResetAxes, onDownloadPNG, onOpenCalibration,
 }: Props) {
   const canHeatmap = selectedSpectra.length >= 2
     && selectedSpectra.every(s => s.format === 'rf6000_3d');
@@ -32,35 +34,35 @@ export function Toolbar({
   const exportCSV = () => {
     if (selectedSpectra.length === 0) return;
 
+    const q = (v: string) => `"${v.replace(/"/g, '""')}"`;
+
     // Build per-spectrum data (cropped wavelengths + processed intensities)
     const cols = selectedSpectra.map(s => {
       const intensities = applyProcessing(s.wavelengths, s.intensities, s.processing);
       const wavelengths = s.processing.crop
         ? s.wavelengths.filter(w => w >= s.processing.crop!.minWl && w <= s.processing.crop!.maxWl)
         : s.wavelengths;
-      return { name: s.label || s.name, wavelengths, intensities };
+      return { name: s.name, label: s.label, yValue: s.yValue, group: s.group, wavelengths, intensities };
     });
 
-    // Single-spectrum: simple two-column format
-    if (cols.length === 1) {
-      const { name, wavelengths, intensities } = cols[0]!;
-      const lines = ['Wavelength (nm),Intensity (processed)'];
-      wavelengths.forEach((w, i) => lines.push(`${w},${intensities[i] ?? ''}`));
-      const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${name.replace(/[^a-z0-9]/gi, '_')}.csv`;
-      a.click();
-      URL.revokeObjectURL(url);
-      return;
-    }
+    const hasLabel = cols.some(c => c.label);
+    const hasYValue = cols.some(c => c.yValue !== undefined);
+    const hasGroup = cols.some(c => c.group);
 
-    // Multi-spectrum: shared wavelength column + one intensity column per spectrum
-    const safeNames = cols.map(c => `"${c.name.replace(/"/g, '""')}"`);
-    const header = ['Wavelength (nm)', ...safeNames].join(',');
+    const lines: string[] = [];
+
+    // SpectraView round-trip header
+    lines.push(['##SpectraView', 'v1'].join(','));
+    lines.push(['#Name', ...cols.map(c => q(c.name))].join(','));
+    if (hasLabel) lines.push(['#Label', ...cols.map(c => q(c.label ?? ''))].join(','));
+    if (hasYValue) lines.push(['#YValue', ...cols.map(c => c.yValue !== undefined ? q(String(c.yValue)) : '""')].join(','));
+    if (hasGroup) lines.push(['#Group', ...cols.map(c => q(c.group ?? ''))].join(','));
+
+    // Data header
+    lines.push(['Wavelength (nm)', ...cols.map(c => q(c.name))].join(','));
+
+    // Data rows
     const maxLen = Math.max(...cols.map(c => c.wavelengths.length));
-    const lines = [header];
     for (let i = 0; i < maxLen; i++) {
       const row = [
         cols[0]!.wavelengths[i] ?? '',
@@ -68,11 +70,13 @@ export function Toolbar({
       ].join(',');
       lines.push(row);
     }
+
     const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'spectra_export.csv';
+    const safeName = cols.length === 1 ? cols[0]!.name.replace(/[^a-z0-9]/gi, '_') : 'spectra_export';
+    a.download = `${safeName}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -215,6 +219,23 @@ export function Toolbar({
             d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
         </svg>
         <span className="hidden sm:inline">Labels</span>
+      </button>
+
+      {/* Annotations toggle */}
+      <button
+        id="tutorial-annotations-btn"
+        onClick={onToggleAnnotations}
+        className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors
+          ${annotationsOpen
+            ? 'bg-rose-500 border-rose-500 text-white'
+            : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+        title="Toggle annotations panel — draw lines and labels on the chart"
+      >
+        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+            d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+        </svg>
+        <span className="hidden sm:inline">Draw</span>
       </button>
 
       {/* Analysis toggle */}

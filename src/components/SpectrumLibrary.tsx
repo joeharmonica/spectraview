@@ -1,6 +1,13 @@
-import { useState, useRef, useMemo, useCallback } from 'react';
+import { useState, useRef, useMemo, useCallback, type ReactNode } from 'react';
 import type { Spectrum, SpectrumFormat } from '../types/spectrum';
 import { ColorPicker } from './ColorPicker';
+
+// ─── Column resizing ───────────────────────────────────────────────────────────
+type ColKey = 'name' | 'format' | 'lambda' | 'pts' | 'label' | 'yValue' | 'group';
+type ColWidths = Record<ColKey, number>;
+const DEFAULT_COL_WIDTHS: ColWidths = {
+  name: 130, format: 60, lambda: 100, pts: 50, label: 90, yValue: 70, group: 80,
+};
 
 type FormatFilter = 'all' | SpectrumFormat;
 type SortKey = 'name-asc' | 'name-desc' | 'format' | 'wav-asc' | 'wav-desc';
@@ -21,6 +28,7 @@ interface Props {
   onColorChange: (id: string, color: string) => void;
   onLabelChange: (id: string, label: string) => void;
   onYValueChange: (id: string, yValue: number | undefined) => void;
+  onGroupChange: (id: string, group: string | undefined) => void;
   onCollapse: () => void;
 }
 
@@ -28,9 +36,10 @@ export function SpectrumLibrary({
   spectra, selectedIds,
   onToggleSelect, onSelectAll, onSelectNone, onInvertSelect,
   onRemove, onRemoveSelected, onClearAll, onDuplicate,
-  onAddMore, onRename, onColorChange, onLabelChange, onYValueChange, onCollapse,
+  onAddMore, onRename, onColorChange, onLabelChange, onYValueChange, onGroupChange, onCollapse,
 }: Props) {
   const [search, setSearch] = useState('');
+  const [multiTerm, setMultiTerm] = useState(false);
   const [formatFilter, setFormatFilter] = useState<FormatFilter>('all');
   const [sortKey, setSortKey] = useState<SortKey>('name-asc');
   const [colorPickerId, setColorPickerId] = useState<string | null>(null);
@@ -39,6 +48,14 @@ export function SpectrumLibrary({
   const [labelingId, setLabelingId] = useState<string | null>(null);
   const [labelValue, setLabelValue] = useState('');
   const [viewMode, setViewMode] = useState<'list' | 'table'>('list');
+  const [collapsedListGroups, setCollapsedListGroups] = useState<Set<string>>(new Set());
+
+  const toggleListGroup = (name: string) =>
+    setCollapsedListGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name); else next.add(name);
+      return next;
+    });
 
   const presentFormats = useMemo(() => [...new Set(spectra.map(s => s.format))], [spectra]);
 
@@ -46,8 +63,19 @@ export function SpectrumLibrary({
     spectra
       .filter(s => {
         if (formatFilter !== 'all' && s.format !== formatFilter) return false;
-        if (search && !s.name.toLowerCase().includes(search.toLowerCase()) &&
-            !s.filename.toLowerCase().includes(search.toLowerCase())) return false;
+        if (search) {
+          const nameLc = s.name.toLowerCase();
+          const fileLc = s.filename.toLowerCase();
+          if (multiTerm) {
+            // AND logic: every whitespace-separated term must match name or filename
+            const terms = search.toLowerCase().split(/\s+/).filter(Boolean);
+            const allMatch = terms.every(t => nameLc.includes(t) || fileLc.includes(t));
+            if (!allMatch) return false;
+          } else {
+            const q = search.toLowerCase();
+            if (!nameLc.includes(q) && !fileLc.includes(q)) return false;
+          }
+        }
         return true;
       })
       .sort((a, b) => {
@@ -60,7 +88,7 @@ export function SpectrumLibrary({
           default: return 0;
         }
       }),
-    [spectra, search, formatFilter, sortKey],
+    [spectra, search, multiTerm, formatFilter, sortKey],
   );
 
   const allSelected = filtered.length > 0 && filtered.every(s => selectedIds.has(s.id));
@@ -151,10 +179,10 @@ export function SpectrumLibrary({
           </svg>
           <input
             type="text"
-            placeholder="Search…"
+            placeholder={multiTerm ? 'term1 term2 … (AND)' : 'Search…'}
             value={search}
             onChange={e => setSearch(e.target.value)}
-            className="w-full text-xs pl-7 pr-2 py-1.5 border border-slate-200 rounded-lg
+            className="w-full text-xs pl-7 pr-6 py-1.5 border border-slate-200 rounded-lg
               focus:outline-none focus:ring-1 focus:ring-blue-300"
           />
           {search && (
@@ -164,6 +192,15 @@ export function SpectrumLibrary({
             </button>
           )}
         </div>
+        {/* Multi-term toggle */}
+        <button
+          onClick={() => setMultiTerm(v => !v)}
+          title={multiTerm ? 'Multi-term search ON (AND logic) — click to turn off' : 'Enable multi-term search (space-separated AND logic)'}
+          className={`flex-shrink-0 px-1.5 py-1.5 text-xs rounded-lg border transition-colors
+            ${multiTerm ? 'bg-blue-100 border-blue-300 text-blue-700' : 'border-slate-200 text-slate-400 hover:text-slate-600'}`}
+        >
+          T+
+        </button>
         <select
           value={sortKey}
           onChange={e => setSortKey(e.target.value as SortKey)}
@@ -179,7 +216,7 @@ export function SpectrumLibrary({
         </select>
       </div>
 
-      {/* Format filter chips */}
+      {/* Format filter chips — shown in both list and table view */}
       {presentFormats.length > 1 && (
         <div className="px-3 py-2 border-b border-slate-100 flex gap-1 flex-wrap">
           <FormatChip label="All" active={formatFilter === 'all'} onClick={() => setFormatFilter('all')} />
@@ -227,43 +264,170 @@ export function SpectrumLibrary({
           <SpectrumTableView
             spectra={filtered}
             selectedIds={selectedIds}
+            sortKey={sortKey}
+            onSortChange={setSortKey}
             onToggle={onToggleSelect}
             onLabelChange={onLabelChange}
             onYValueChange={onYValueChange}
+            onGroupChange={onGroupChange}
           />
         ) : (
-          <ul className="divide-y divide-slate-100">
-            {filtered.map(spectrum => (
-              <SpectrumRow
-                key={spectrum.id}
-                spectrum={spectrum}
-                isSelected={selectedIds.has(spectrum.id)}
-                isRenaming={renamingId === spectrum.id}
-                renameValue={renameValue}
-                isLabeling={labelingId === spectrum.id}
-                labelValue={labelValue}
-                showColorPicker={colorPickerId === spectrum.id}
-                onToggle={() => onToggleSelect(spectrum.id)}
-                onRemove={() => onRemove(spectrum.id)}
-                onDuplicate={() => onDuplicate(spectrum.id)}
-                onColorSwatchClick={() => setColorPickerId(colorPickerId === spectrum.id ? null : spectrum.id)}
-                onColorChange={color => { onColorChange(spectrum.id, color); setColorPickerId(null); }}
-                onColorPickerClose={() => setColorPickerId(null)}
-                onNameClick={() => startRename(spectrum)}
-                onRenameChange={setRenameValue}
-                onRenameCommit={() => commitRename(spectrum.id)}
-                onLabelClick={() => startLabel(spectrum)}
-                onLabelChange={setLabelValue}
-                onLabelCommit={() => commitLabel(spectrum.id)}
-                onYValueChange={onYValueChange}
-              />
-            ))}
-          </ul>
+          <ListViewGrouped
+            filtered={filtered}
+            selectedIds={selectedIds}
+            renamingId={renamingId}
+            renameValue={renameValue}
+            labelingId={labelingId}
+            labelValue={labelValue}
+            colorPickerId={colorPickerId}
+            collapsedGroups={collapsedListGroups}
+            onToggleGroup={toggleListGroup}
+            onToggleSelect={onToggleSelect}
+            onRemove={onRemove}
+            onDuplicate={onDuplicate}
+            setColorPickerId={setColorPickerId}
+            onColorChange={onColorChange}
+            startRename={startRename}
+            setRenameValue={setRenameValue}
+            commitRename={commitRename}
+            startLabel={startLabel}
+            setLabelValue={setLabelValue}
+            commitLabel={commitLabel}
+            onYValueChange={onYValueChange}
+          />
         )}
       </div>
     </aside>
   );
 }
+
+// ─── Grouped list view ────────────────────────────────────────────────────────
+
+function ListViewGrouped({
+  filtered, selectedIds, renamingId, renameValue, labelingId, labelValue, colorPickerId,
+  collapsedGroups, onToggleGroup,
+  onToggleSelect, onRemove, onDuplicate, setColorPickerId, onColorChange,
+  startRename, setRenameValue, commitRename,
+  startLabel, setLabelValue, commitLabel, onYValueChange,
+}: {
+  filtered: Spectrum[];
+  selectedIds: Set<string>;
+  renamingId: string | null;
+  renameValue: string;
+  labelingId: string | null;
+  labelValue: string;
+  colorPickerId: string | null;
+  collapsedGroups: Set<string>;
+  onToggleGroup: (name: string) => void;
+  onToggleSelect: (id: string) => void;
+  onRemove: (id: string) => void;
+  onDuplicate: (id: string) => void;
+  setColorPickerId: (id: string | null) => void;
+  onColorChange: (id: string, color: string) => void;
+  startRename: (s: Spectrum) => void;
+  setRenameValue: (v: string) => void;
+  commitRename: (id: string) => void;
+  startLabel: (s: Spectrum) => void;
+  setLabelValue: (v: string) => void;
+  commitLabel: (id: string) => void;
+  onYValueChange: (id: string, yValue: number | undefined) => void;
+}) {
+  // Build ordered group buckets: named groups (sorted), then ungrouped
+  const groupMap = new Map<string, Spectrum[]>();
+  filtered.forEach(s => {
+    const g = s.group ?? '';
+    if (!groupMap.has(g)) groupMap.set(g, []);
+    groupMap.get(g)!.push(s);
+  });
+  const namedGroups = [...groupMap.entries()]
+    .filter(([k]) => k !== '')
+    .sort((a, b) => a[0].localeCompare(b[0]));
+  const ungrouped = groupMap.get('') ?? [];
+  const hasGroups = namedGroups.length > 0;
+
+  const renderRow = (spectrum: Spectrum) => (
+    <SpectrumRow
+      key={spectrum.id}
+      spectrum={spectrum}
+      isSelected={selectedIds.has(spectrum.id)}
+      isRenaming={renamingId === spectrum.id}
+      renameValue={renameValue}
+      isLabeling={labelingId === spectrum.id}
+      labelValue={labelValue}
+      showColorPicker={colorPickerId === spectrum.id}
+      onToggle={() => onToggleSelect(spectrum.id)}
+      onRemove={() => onRemove(spectrum.id)}
+      onDuplicate={() => onDuplicate(spectrum.id)}
+      onColorSwatchClick={() => setColorPickerId(colorPickerId === spectrum.id ? null : spectrum.id)}
+      onColorChange={color => { onColorChange(spectrum.id, color); setColorPickerId(null); }}
+      onColorPickerClose={() => setColorPickerId(null)}
+      onNameClick={() => startRename(spectrum)}
+      onRenameChange={setRenameValue}
+      onRenameCommit={() => commitRename(spectrum.id)}
+      onLabelClick={() => startLabel(spectrum)}
+      onLabelChange={setLabelValue}
+      onLabelCommit={() => commitLabel(spectrum.id)}
+      onYValueChange={onYValueChange}
+    />
+  );
+
+  if (!hasGroups) {
+    // No groups — plain flat list (original behaviour)
+    return <ul className="divide-y divide-slate-100">{filtered.map(renderRow)}</ul>;
+  }
+
+  return (
+    <ul className="divide-y divide-slate-100">
+      {namedGroups.map(([groupName, members]) => {
+        const isCollapsed = collapsedGroups.has(groupName);
+        return (
+          <>
+            {/* Group header */}
+            <li
+              key={`grp-${groupName}`}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-violet-50 cursor-pointer select-none
+                hover:bg-violet-100 transition-colors"
+              onClick={() => onToggleGroup(groupName)}
+            >
+              <svg
+                className={`w-3 h-3 text-violet-500 flex-shrink-0 transition-transform ${isCollapsed ? '' : 'rotate-90'}`}
+                fill="none" stroke="currentColor" viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
+              <span className="text-xs font-semibold text-violet-700">{groupName}</span>
+              <span className="text-xs text-violet-400 ml-1">({members.length})</span>
+            </li>
+            {!isCollapsed && members.map(renderRow)}
+          </>
+        );
+      })}
+      {/* Ungrouped */}
+      {ungrouped.length > 0 && (
+        <>
+          <li
+            key="grp-ungrouped"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-50 cursor-pointer select-none
+              hover:bg-slate-100 transition-colors"
+            onClick={() => onToggleGroup('__ungrouped__')}
+          >
+            <svg
+              className={`w-3 h-3 text-slate-400 flex-shrink-0 transition-transform ${collapsedGroups.has('__ungrouped__') ? '' : 'rotate-90'}`}
+              fill="none" stroke="currentColor" viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+            <span className="text-xs font-medium text-slate-500">Ungrouped</span>
+            <span className="text-xs text-slate-400 ml-1">({ungrouped.length})</span>
+          </li>
+          {!collapsedGroups.has('__ungrouped__') && ungrouped.map(renderRow)}
+        </>
+      )}
+    </ul>
+  );
+}
+
+// ─── Spectrum row ──────────────────────────────────────────────────────────────
 
 function SpectrumRow({
   spectrum, isSelected, isRenaming, renameValue, isLabeling, labelValue, showColorPicker,
@@ -508,149 +672,324 @@ function SpectrumRow({
 
 // ─── Table View ───────────────────────────────────────────────────────────────
 
+type EditField = 'label' | 'yValue' | 'group';
+
 function SpectrumTableView({
-  spectra, selectedIds, onToggle, onLabelChange, onYValueChange,
+  spectra, selectedIds, sortKey, onSortChange, onToggle,
+  onLabelChange, onYValueChange, onGroupChange,
 }: {
   spectra: Spectrum[];
   selectedIds: Set<string>;
+  sortKey: SortKey;
+  onSortChange: (key: SortKey) => void;
   onToggle: (id: string) => void;
   onLabelChange: (id: string, label: string) => void;
   onYValueChange: (id: string, yValue: number | undefined) => void;
+  onGroupChange: (id: string, group: string | undefined) => void;
 }) {
-  const [editCell, setEditCell] = useState<{ id: string; field: 'label' | 'yValue' } | null>(null);
+  const [editCell, setEditCell] = useState<{ id: string; field: EditField } | null>(null);
   const [editValue, setEditValue] = useState('');
+  const [colWidths, setColWidths] = useState<ColWidths>(DEFAULT_COL_WIDTHS);
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
 
   const commitEdit = useCallback(() => {
     if (!editCell) return;
     if (editCell.field === 'label') {
       onLabelChange(editCell.id, editValue.trim());
-    } else {
+    } else if (editCell.field === 'yValue') {
       const v = editValue.trim() === '' ? undefined : parseFloat(editValue.trim());
       onYValueChange(editCell.id, v !== undefined && isNaN(v) ? undefined : v);
+    } else {
+      onGroupChange(editCell.id, editValue.trim() || undefined);
     }
     setEditCell(null);
-  }, [editCell, editValue, onLabelChange, onYValueChange]);
+  }, [editCell, editValue, onLabelChange, onYValueChange, onGroupChange]);
 
-  const startEdit = (id: string, field: 'label' | 'yValue', currentValue: string) => {
+  const startEdit = (id: string, field: EditField, currentValue: string) => {
     setEditCell({ id, field });
     setEditValue(currentValue);
   };
 
+  // Column resize drag handler
+  const startColResize = useCallback((e: React.MouseEvent, col: ColKey) => {
+    e.preventDefault();
+    let lastX = e.clientX;
+    const onMove = (ev: MouseEvent) => {
+      const dx = ev.clientX - lastX;
+      lastX = ev.clientX;
+      setColWidths(prev => ({
+        ...prev,
+        [col]: Math.max(40, Math.min(400, (prev[col] ?? 80) + dx)),
+      }));
+    };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }, []);
+
+  // Sort icon helper
+  const sortIcon = (asc: SortKey, desc: SortKey) => {
+    if (sortKey === asc) return <span className="ml-1 text-blue-500">↑</span>;
+    if (sortKey === desc) return <span className="ml-1 text-blue-500">↓</span>;
+    return <span className="ml-1 text-slate-300">⇅</span>;
+  };
+  const toggleSort = (asc: SortKey, desc: SortKey) => {
+    onSortChange(sortKey === asc ? desc : asc);
+  };
+
+  // Group spectra: collect unique group names + ungrouped
+  const groups = useMemo(() => {
+    const map = new Map<string, Spectrum[]>();
+    const UNGROUPED = '';
+    spectra.forEach(s => {
+      const g = s.group ?? UNGROUPED;
+      if (!map.has(g)) map.set(g, []);
+      map.get(g)!.push(s);
+    });
+    // Named groups first, ungrouped last
+    const named = [...map.entries()].filter(([k]) => k !== UNGROUPED).sort((a, b) => a[0].localeCompare(b[0]));
+    const ungrouped = map.get(UNGROUPED);
+    return { named, ungrouped: ungrouped ?? [], hasGroups: named.length > 0 };
+  }, [spectra]);
+
+  const toggleGroupCollapse = (groupName: string) => {
+    setCollapsedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(groupName)) next.delete(groupName);
+      else next.add(groupName);
+      return next;
+    });
+  };
+
+  const renderRow = (s: Spectrum) => {
+    const isSelected = selectedIds.has(s.id);
+    const editingLabel = editCell?.id === s.id && editCell.field === 'label';
+    const editingYValue = editCell?.id === s.id && editCell.field === 'yValue';
+    const editingGroup = editCell?.id === s.id && editCell.field === 'group';
+    const lambdaMin = s.wavelengths[0]?.toFixed(0) ?? '—';
+    const lambdaMax = s.wavelengths[s.wavelengths.length - 1]?.toFixed(0) ?? '—';
+
+    return (
+      <tr
+        key={s.id}
+        className={`border-b border-slate-100 hover:bg-slate-50 ${isSelected ? 'bg-blue-50/40' : ''}`}
+      >
+        {/* Checkbox + color */}
+        <td className="px-2 py-1.5 w-10 flex-shrink-0">
+          <div className="flex items-center gap-1">
+            <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: s.color }} />
+            <input
+              type="checkbox"
+              checked={isSelected}
+              onChange={() => onToggle(s.id)}
+              className="accent-blue-500"
+            />
+          </div>
+        </td>
+        {/* Name */}
+        <td className="px-2 py-1.5 overflow-hidden" style={{ maxWidth: colWidths.name }}>
+          <span className="truncate block text-slate-700 font-medium" title={s.name}>{s.name}</span>
+        </td>
+        {/* Format */}
+        <td className="px-2 py-1.5" style={{ width: colWidths.format }}>
+          <span className="text-slate-400">{formatBadge(s.format)}</span>
+        </td>
+        {/* λ Range */}
+        <td className="px-2 py-1.5 text-right text-slate-400 font-mono whitespace-nowrap" style={{ width: colWidths.lambda }}>
+          {lambdaMin}–{lambdaMax}
+        </td>
+        {/* Points */}
+        <td className="px-2 py-1.5 text-right text-slate-400 font-mono" style={{ width: colWidths.pts }}>
+          {s.wavelengths.length}
+        </td>
+        {/* Label — editable */}
+        <td className="px-2 py-1.5" style={{ width: colWidths.label }} onClick={e => e.stopPropagation()}>
+          {editingLabel ? (
+            <input
+              autoFocus
+              type="text"
+              value={editValue}
+              placeholder="label…"
+              onChange={e => setEditValue(e.target.value)}
+              onBlur={commitEdit}
+              onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') commitEdit(); }}
+              className="w-full border border-blue-300 rounded px-1 py-0.5 focus:outline-none text-xs"
+            />
+          ) : (
+            <button
+              onClick={() => startEdit(s.id, 'label', s.label ?? '')}
+              className={`w-full text-left px-1 py-0.5 rounded hover:bg-blue-50 transition-colors ${
+                s.label ? 'text-slate-700' : 'text-slate-300 italic'
+              }`}
+            >
+              {s.label || 'add…'}
+            </button>
+          )}
+        </td>
+        {/* Y Value — editable */}
+        <td className="px-2 py-1.5" style={{ width: colWidths.yValue }} onClick={e => e.stopPropagation()}>
+          {editingYValue ? (
+            <input
+              autoFocus
+              type="number"
+              value={editValue}
+              placeholder="0"
+              onChange={e => setEditValue(e.target.value)}
+              onBlur={commitEdit}
+              onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') commitEdit(); }}
+              className="w-full border border-teal-300 rounded px-1 py-0.5 focus:outline-none text-xs font-mono"
+            />
+          ) : (
+            <button
+              onClick={() => startEdit(s.id, 'yValue', s.yValue !== undefined ? String(s.yValue) : '')}
+              className={`w-full text-left px-1 py-0.5 rounded hover:bg-teal-50 transition-colors font-mono ${
+                s.yValue !== undefined ? 'text-teal-700' : 'text-slate-300 italic font-sans'
+              }`}
+            >
+              {s.yValue !== undefined ? s.yValue : 'add…'}
+            </button>
+          )}
+        </td>
+        {/* Group — editable */}
+        <td className="px-2 py-1.5" style={{ width: colWidths.group }} onClick={e => e.stopPropagation()}>
+          {editingGroup ? (
+            <input
+              autoFocus
+              type="text"
+              value={editValue}
+              placeholder="group…"
+              onChange={e => setEditValue(e.target.value)}
+              onBlur={commitEdit}
+              onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') commitEdit(); }}
+              className="w-full border border-violet-300 rounded px-1 py-0.5 focus:outline-none text-xs"
+            />
+          ) : (
+            <button
+              onClick={() => startEdit(s.id, 'group', s.group ?? '')}
+              className={`w-full text-left px-1 py-0.5 rounded hover:bg-violet-50 transition-colors ${
+                s.group ? 'text-violet-700' : 'text-slate-300 italic'
+              }`}
+            >
+              {s.group || 'add…'}
+            </button>
+          )}
+        </td>
+      </tr>
+    );
+  };
+
+  // Resizable column header cell
+  const ThResize = ({ col, children, align = 'left', sortAsc, sortDesc }: {
+    col: ColKey; children: ReactNode; align?: 'left' | 'right';
+    sortAsc?: SortKey; sortDesc?: SortKey;
+  }) => (
+    <th
+      className={`px-2 py-2 text-${align} text-slate-500 font-semibold relative select-none whitespace-nowrap`}
+      style={{ width: colWidths[col], minWidth: 40 }}
+    >
+      <div
+        className={`flex items-center gap-0.5 ${sortAsc ? 'cursor-pointer hover:text-blue-600' : ''} ${align === 'right' ? 'justify-end' : ''}`}
+        onClick={() => sortAsc && sortDesc && toggleSort(sortAsc, sortDesc)}
+      >
+        {children}
+        {sortAsc && sortDesc && sortIcon(sortAsc, sortDesc)}
+      </div>
+      {/* Resize handle */}
+      <div
+        onMouseDown={e => startColResize(e, col)}
+        className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-blue-200 transition-colors"
+      />
+    </th>
+  );
+
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-xs border-collapse min-w-[520px]">
-        <thead>
-          <tr className="bg-slate-50 border-b border-slate-200 sticky top-0 z-10">
-            <th className="px-2 py-2 text-left text-slate-400 font-semibold w-6"></th>
-            <th className="px-2 py-2 text-left text-slate-500 font-semibold">Name</th>
-            <th className="px-2 py-2 text-left text-slate-500 font-semibold">Format</th>
-            <th className="px-2 py-2 text-right text-slate-500 font-semibold">λ Range (nm)</th>
-            <th className="px-2 py-2 text-right text-slate-500 font-semibold">Pts</th>
-            <th className="px-2 py-2 text-left text-slate-500 font-semibold">
-              Label
-              <span className="ml-1 text-slate-300 font-normal">✎</span>
-            </th>
-            <th className="px-2 py-2 text-left text-slate-500 font-semibold">
-              Y Value
-              <span className="ml-1 text-slate-300 font-normal">✎</span>
-            </th>
+    <div className="overflow-x-auto overflow-y-auto h-full">
+      <table className="w-full text-xs border-collapse" style={{ tableLayout: 'fixed', minWidth: 580 }}>
+        <colgroup>
+          <col style={{ width: 40 }} />
+          <col style={{ width: colWidths.name }} />
+          <col style={{ width: colWidths.format }} />
+          <col style={{ width: colWidths.lambda }} />
+          <col style={{ width: colWidths.pts }} />
+          <col style={{ width: colWidths.label }} />
+          <col style={{ width: colWidths.yValue }} />
+          <col style={{ width: colWidths.group }} />
+        </colgroup>
+        <thead className="sticky top-0 z-10">
+          <tr className="bg-slate-50 border-b border-slate-200">
+            <th className="px-2 py-2 w-10" />
+            <ThResize col="name" sortAsc="name-asc" sortDesc="name-desc">Name</ThResize>
+            <ThResize col="format" sortAsc="format" sortDesc="format">Fmt</ThResize>
+            <ThResize col="lambda" align="right" sortAsc="wav-asc" sortDesc="wav-desc">λ Range</ThResize>
+            <ThResize col="pts" align="right">Pts</ThResize>
+            <ThResize col="label">Label <span className="text-slate-300 font-normal">✎</span></ThResize>
+            <ThResize col="yValue">Y Val <span className="text-slate-300 font-normal">✎</span></ThResize>
+            <ThResize col="group">Group <span className="text-slate-300 font-normal">✎</span></ThResize>
           </tr>
         </thead>
         <tbody>
-          {spectra.map(s => {
-            const isSelected = selectedIds.has(s.id);
-            const editingLabel = editCell?.id === s.id && editCell.field === 'label';
-            const editingYValue = editCell?.id === s.id && editCell.field === 'yValue';
-            const lambdaMin = s.wavelengths[0]?.toFixed(0) ?? '—';
-            const lambdaMax = s.wavelengths[s.wavelengths.length - 1]?.toFixed(0) ?? '—';
-
-            return (
-              <tr
-                key={s.id}
-                className={`border-b border-slate-100 hover:bg-slate-50 ${isSelected ? 'bg-blue-50/40' : ''}`}
-              >
-                {/* Checkbox + color */}
-                <td className="px-2 py-1.5 w-6">
-                  <div className="flex items-center gap-1">
-                    <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: s.color }} />
-                    <input
-                      type="checkbox"
-                      checked={isSelected}
-                      onChange={() => onToggle(s.id)}
-                      className="accent-blue-500"
-                    />
-                  </div>
-                </td>
-                {/* Name */}
-                <td className="px-2 py-1.5 max-w-[120px]">
-                  <span className="truncate block text-slate-700 font-medium" title={s.name}>{s.name}</span>
-                </td>
-                {/* Format */}
-                <td className="px-2 py-1.5">
-                  <span className="text-slate-400">{formatBadge(s.format)}</span>
-                </td>
-                {/* λ Range */}
-                <td className="px-2 py-1.5 text-right text-slate-400 font-mono whitespace-nowrap">
-                  {lambdaMin}–{lambdaMax}
-                </td>
-                {/* Points */}
-                <td className="px-2 py-1.5 text-right text-slate-400 font-mono">
-                  {s.wavelengths.length}
-                </td>
-                {/* Label — editable */}
-                <td className="px-2 py-1.5 min-w-[80px]" onClick={e => e.stopPropagation()}>
-                  {editingLabel ? (
-                    <input
-                      autoFocus
-                      type="text"
-                      value={editValue}
-                      placeholder="label…"
-                      onChange={e => setEditValue(e.target.value)}
-                      onBlur={commitEdit}
-                      onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') commitEdit(); }}
-                      className="w-full border border-blue-300 rounded px-1 py-0.5 focus:outline-none text-xs"
-                    />
-                  ) : (
-                    <button
-                      onClick={() => startEdit(s.id, 'label', s.label ?? '')}
-                      className={`w-full text-left px-1 py-0.5 rounded hover:bg-blue-50 transition-colors ${
-                        s.label ? 'text-slate-700' : 'text-slate-300 italic'
-                      }`}
+          {groups.hasGroups ? (
+            <>
+              {groups.named.map(([groupName, members]) => {
+                const isCollapsed = collapsedGroups.has(groupName);
+                return (
+                  <>
+                    {/* Group header row */}
+                    <tr
+                      key={`grp-${groupName}`}
+                      className="bg-violet-50 border-b border-violet-100 cursor-pointer select-none"
+                      onClick={() => toggleGroupCollapse(groupName)}
                     >
-                      {s.label || 'click to add…'}
-                    </button>
-                  )}
-                </td>
-                {/* Y Value — editable */}
-                <td className="px-2 py-1.5 min-w-[70px]" onClick={e => e.stopPropagation()}>
-                  {editingYValue ? (
-                    <input
-                      autoFocus
-                      type="number"
-                      value={editValue}
-                      placeholder="0"
-                      onChange={e => setEditValue(e.target.value)}
-                      onBlur={commitEdit}
-                      onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') commitEdit(); }}
-                      className="w-full border border-teal-300 rounded px-1 py-0.5 focus:outline-none text-xs font-mono"
-                    />
-                  ) : (
-                    <button
-                      onClick={() => startEdit(s.id, 'yValue', s.yValue !== undefined ? String(s.yValue) : '')}
-                      className={`w-full text-left px-1 py-0.5 rounded hover:bg-teal-50 transition-colors font-mono ${
-                        s.yValue !== undefined ? 'text-teal-700' : 'text-slate-300 italic font-sans'
-                      }`}
-                    >
-                      {s.yValue !== undefined ? s.yValue : 'click to add…'}
-                    </button>
-                  )}
-                </td>
-              </tr>
-            );
-          })}
+                      <td colSpan={8} className="px-3 py-1">
+                        <div className="flex items-center gap-1.5">
+                          <svg
+                            className={`w-3 h-3 text-violet-500 flex-shrink-0 transition-transform ${isCollapsed ? '' : 'rotate-90'}`}
+                            fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                          >
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                          </svg>
+                          <span className="text-xs font-semibold text-violet-700">{groupName}</span>
+                          <span className="text-xs text-violet-400 font-normal ml-1">({members.length})</span>
+                        </div>
+                      </td>
+                    </tr>
+                    {!isCollapsed && members.map(renderRow)}
+                  </>
+                );
+              })}
+              {/* Ungrouped */}
+              {groups.ungrouped.length > 0 && (
+                <>
+                  <tr
+                    className="bg-slate-50/80 border-b border-slate-100 cursor-pointer select-none"
+                    onClick={() => toggleGroupCollapse('__ungrouped__')}
+                  >
+                    <td colSpan={8} className="px-3 py-1">
+                      <div className="flex items-center gap-1.5">
+                        <svg
+                          className={`w-3 h-3 text-slate-400 flex-shrink-0 transition-transform ${collapsedGroups.has('__ungrouped__') ? '' : 'rotate-90'}`}
+                          fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                        >
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                        </svg>
+                        <span className="text-xs font-medium text-slate-500">Ungrouped</span>
+                        <span className="text-xs text-slate-400 ml-1">({groups.ungrouped.length})</span>
+                      </div>
+                    </td>
+                  </tr>
+                  {!collapsedGroups.has('__ungrouped__') && groups.ungrouped.map(renderRow)}
+                </>
+              )}
+            </>
+          ) : (
+            spectra.map(renderRow)
+          )}
         </tbody>
       </table>
-      <p className="text-[10px] text-slate-300 px-3 py-2">Click Label or Y Value cells to edit inline.</p>
+      <p className="text-[10px] text-slate-300 px-3 py-2">Click cells to edit. Drag column borders to resize. Click group header to collapse.</p>
     </div>
   );
 }
