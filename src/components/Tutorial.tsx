@@ -10,82 +10,82 @@ const STEPS: Step[] = [
   {
     targetId: null,
     title: 'Welcome to SpectraView',
-    body: 'A browser-based platform for loading, visualising, processing, and calibrating spectral data. All computation and storage runs entirely in your browser — nothing leaves your machine. Use ← → or keyboard arrows to navigate, Esc to exit.',
+    body: 'SpectraView runs entirely in your browser — nothing is uploaded or shared. Load, visualise, process, and calibrate spectral data from common lab instruments. Use the arrow keys or the buttons below to move through this tour.',
   },
   {
     targetId: 'tutorial-library',
     title: 'Spectrum Library',
-    body: 'Drag-and-drop or click "+ Add" to load CSV/XLSX files. Check a spectrum to plot it; uncheck to hide it. Double-click a name to rename it. Click the colour swatch to change the plot colour. The panel is resizable — drag its right edge up to 50 % of screen width for more room. The "←" button collapses it; re-expand via the ">" bar.',
+    body: 'Drag files in or click "+ Add" to load CSV or Excel files. Check a row to plot that spectrum — uncheck to hide it. Double-click a name to rename it, or click the colour swatch to change the line colour. Drag the panel\'s right edge to resize it.',
   },
   {
     targetId: 'tutorial-library',
     title: 'Search & Multi-Term Filter',
-    body: 'Type in the search box to filter by name or filename. Click the "T+" button to enable multi-term mode: enter space-separated terms and every term must match (AND logic). Example: "uv 300" shows only spectra whose name or filename contains both "uv" and "300". Format filter chips appear when you have spectra from multiple instruments.',
+    body: 'Type in the search box to filter spectra by name instantly. Click "T+" to enable multi-term mode — separate words with spaces and all terms must match. Format chips let you show only spectra from a specific instrument.',
   },
   {
     targetId: 'tutorial-library',
     title: 'Custom Labels & Y Values',
-    body: 'Each row has a coloured "+ label" pill — click it to set a display name shown in the chart legend and tooltips instead of the filename. The teal "+ Y value" pill stores a reference value (e.g. concentration) that auto-populates Step 1 of Calibration.',
+    body: 'Click the "+ label" pill on any row to set a display name shown in the chart legend. Click the "+ Y value" pill to store a reference value (e.g. concentration) that auto-fills Step 1 of the Calibration wizard.',
   },
   {
     targetId: 'tutorial-library',
     title: 'Table View — Sort, Resize & Group',
-    body: 'Click the grid icon in the library header to switch to table view. Click any column header to sort (↑ ascending, ↓ descending). Drag the right edge of a column header to resize it. Edit the Group cell on any row to assign a group name — rows are then clustered under collapsible group headers. Click a group header row to expand or collapse it.',
+    body: 'Click the grid icon in the library header to switch to table view. Click a column header to sort, and drag its right edge to resize. Type a group name in the Group cell to cluster rows — click the group header to collapse or expand it.',
   },
   {
     targetId: 'tutorial-view-mode',
     title: 'View Modes',
-    body: 'Overlap: all spectra share one Y-axis. Stacked: spectra are offset vertically — drag the Offset slider to control spacing. Heatmap: builds an EEM 2D colour map (Viridis scale) from 3D fluorescence data; requires ≥ 2 rf6000_3d spectra. Hover on the heatmap to preview the emission slice in the resizable panel below the chart.',
+    body: 'Switch between Overlap (shared Y-axis), Stacked (vertically offset — drag the slider to adjust spacing), and Heatmap (EEM colour map for 3D fluorescence data). Hover the heatmap to preview an emission slice in the resizable panel below.',
   },
   {
     targetId: 'tutorial-chart-controls',
     title: 'Chart Controls & Zoom Persistence',
-    body: 'Zoom (default): drag to draw a zoom box. Pan: drag to scroll. Both support scroll-wheel zoom. The chart remembers your zoom even when you select or deselect spectra or edit values — your view is not reset by library changes. Reset (⤢) clears the stored zoom and fits all data back into view. Download saves a 1200 × 800 px PNG at 2×.',
+    body: 'Use Zoom (drag a box) or Pan (drag to scroll) — both support scroll-wheel zoom. Your zoom is preserved when you select spectra or edit values in the library. Click Reset (⤢) to fit all data back into view.',
   },
   {
     targetId: 'tutorial-peaks-btn',
     title: 'Peak Table',
-    body: 'Detects local maxima across all selected spectra. Filter by prominence % (relative to each spectrum\'s maximum) or by absolute minimum intensity. Click the bookmark icon on any row to mark that peak on the chart with a labelled dotted line. Click "Clear markers" to remove all marks.',
+    body: 'Opens a table of local maxima for all plotted spectra. Filter by prominence (relative to each spectrum\'s max) or minimum intensity. Bookmark any peak to mark it on the chart with a dotted line.',
   },
   {
     targetId: 'tutorial-labels-btn',
     title: 'Peak Annotations',
-    body: 'Toggles name + wavelength callout labels at each spectrum\'s dominant peak. Labels show the custom label (or filename) alongside the peak wavelength in nm — handy for slide-ready chart exports.',
+    body: 'Toggle wavelength callout labels on each spectrum\'s highest peak. Labels show the custom name and peak wavelength in nm — handy for export-ready charts.',
   },
   {
     targetId: 'tutorial-annotations-btn',
     title: 'Draw & Annotations',
-    body: 'Click Draw to open the Annotations panel. Add vertical lines (ideal for marking peak wavelengths), horizontal lines, or text labels — choose position, colour, and line style (solid / dash / dot). Enable "Drawing" mode in the panel then click anywhere on the chart to drop a vertical marker instantly. Edit or delete any annotation from the list.',
+    body: 'Open the Annotations panel to place vertical lines, horizontal lines, or text labels on the chart. Enable "Drawing" mode, then click anywhere on the chart to instantly drop a vertical marker at that wavelength. Edit the label or delete any annotation from the list below.',
   },
   {
     targetId: 'tutorial-analysis-btn',
     title: 'Analysis Panel',
-    body: 'Non-destructive processing applied in order: (1) Crop — trim to a wavelength window. (2) Smooth — Savitzky-Golay filter with adjustable window and polynomial order. (3) Baseline — polynomial background subtraction. (4) Normalise — to maximum, unit area, or a reference wavelength. (5) Integrate — trapezoidal AUC. Hover the ? icons for detailed tips.',
+    body: 'Apply non-destructive processing in sequence: Crop → Smooth (Savitzky-Golay) → Baseline subtraction → Normalise → Integrate (AUC). Each step only affects the chart view — your original data is never modified.',
   },
   {
     targetId: 'tutorial-csv-btn',
     title: 'CSV Export & Round-Trip Import',
-    body: 'CSV exports processed intensities for all selected spectra. The file includes a SpectraView metadata header with each spectrum\'s name, label, Y value, and group — so re-importing the same CSV file fully restores all metadata and grouping automatically. Spectra and processing settings are also auto-saved to IndexedDB and restored on your next visit.',
+    body: 'Export processed intensities as a CSV. SpectraView embeds each spectrum\'s name, label, Y value, and group so re-importing the file fully restores everything. Data is also auto-saved to your browser and reloaded on your next visit.',
   },
   {
     targetId: null,
     title: 'Calibration & Modelling',
-    body: 'Build quantitative spectral models to predict concentration, pH, or any measurable property. Click the Calibration button to open the 3-step wizard: (1) Define Variables — choose spectral features and enter known Y values (or use the Y value pills in the library to pre-fill them). (2) Configure Model — pick one or more algorithms. (3) Review Results — metrics, plots, and downloadable report.',
+    body: 'Build a model to predict concentration, pH, or any measurable property from spectral data. The 3-step wizard guides you through defining features, picking algorithms (PCR, PLS-R, Ridge, and more), and reviewing results with metrics and interactive plots.',
   },
   {
     targetId: null,
     title: 'Spectral Input Features (X)',
-    body: 'Three input modes: Single wavelength — intensity at one nm point, ideal for Beer-Lambert calibrations (shows Pearson r and slope). Full spectrum — all wavelengths, best with PLS-R or PCR. Multiple wavelength ranges — one or more nm windows concatenated as features; use "+ Add range" to focus on known absorption bands.',
+    body: 'Choose how to represent each spectrum: a single wavelength (great for Beer-Lambert), the full spectrum, or one or more custom nm ranges. Click "+ Add range" to focus on known absorption bands.',
   },
   {
     targetId: null,
     title: 'Model Results & Comparison',
-    body: 'Select two or more models to run a comparison. Models run sequentially with a live progress bar. Results open with an Overview tab showing the ranked comparison table (★ best = highest test R²; ← your pick) and R² chart. Each model gets its own tab with full results including % error chart and predictions table. Download a full HTML report covering all models.',
+    body: 'Run multiple models at once to compare them side by side. The Overview tab ranks models by test R² and highlights the best performer. Each model tab shows a predictions table, % error chart, and full residuals. Download an HTML report covering all models.',
   },
   {
     targetId: null,
     title: "You're all set!",
-    body: 'Click the ? button in the header any time to replay this tour. Hover the ? icons throughout the app for contextual tips. On smaller screens, use the ☰ button in the header to open the library drawer. Keyboard shortcut: ← → arrow keys navigate this tour.',
+    body: 'Click the ? button in the top bar any time to replay this tour. Hover ? icons throughout the app for in-context tips. Use ← → arrow keys to navigate the tour, or Esc to close it at any time.',
   },
 ];
 

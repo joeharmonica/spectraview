@@ -2,6 +2,29 @@
 
 ---
 
+## Phase 10 — Click-to-Draw Fix, Cursor Readout, Tutorial Polish (2026-03-20)
+
+### Fix 1 — Click anywhere to draw (not just on trace points)
+**Root cause:** `handleClick` required `event.points?.length > 0` which only fires when clicking on a Plotly trace. Clicks on empty chart area produced an empty `points` array and were silently ignored.
+**Fix:** Render a transparent overlay `<div>` covering the exact plot area when in annotate mode. On click, convert pixel position to data coordinates via `pixelToDataCoords` (uses Plotly's `_fullLayout.xaxis.p2c` / `yaxis.p2c`). Extracted as testable utility in `src/lib/chartUtils.ts`.
+- [x] src/lib/chartUtils.ts: new `pixelToDataCoords` helper
+- [x] ChartWorkspace.tsx: add `chartDivRef`, overlay div, `handleOverlayClick`; update `onAnnotationAdd` signature to `(x, y)`
+- [x] App.tsx: update `handleAnnotationAddFromChart` to accept `y?: number`
+
+### Feature 2 — Live cursor x,y readout on chart
+**Implementation:** `cursorReadoutRef` div (always rendered, `display: none` initially). `handleMouseMove` on wrapper div calls `pixelToDataCoords` and writes directly to the div's `textContent` — zero React re-renders on every mousemove event. `handleMouseLeave` hides it.
+- [x] ChartWorkspace.tsx: `cursorReadoutRef`, `viewModeRef`, `handleMouseMove`, `handleMouseLeave`, readout div (top-right corner)
+
+### Feature 3 — Tutorial paragraph readability
+**Implementation:** Rewrote all 16 step `body` strings — shorter sentences, friendlier tone, ≤ 4 sentences per step.
+- [x] Tutorial.tsx: rewrite all STEPS body strings
+
+### Verification
+- [x] npm run build — TypeScript clean
+- [x] npm test — 174/174 passing (10 new tests in chartUtils.test.ts)
+
+---
+
 ## Phase 9 — Bug Fixes & Enhancements (2026-03-20)
 
 ### Fix 1 — Revert annotate-mode dragmode change (crosshair)

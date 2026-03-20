@@ -161,7 +161,8 @@ export default function App() {
     setUserAnnotations(prev => [...prev, { ...ann, id: crypto.randomUUID() }]);
   }, []);
 
-  const handleAnnotationAddFromChart = useCallback((x: number) => {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const handleAnnotationAddFromChart = useCallback((x: number, _y?: number) => {
     setUserAnnotations(prev => [...prev, {
       id: crypto.randomUUID(),
       type: 'vline',

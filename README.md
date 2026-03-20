@@ -95,6 +95,7 @@ All controls live in the top toolbar:
 | **Pan** | Drag to scroll the chart; scroll wheel still zooms |
 | **Reset** | Fits all loaded data back into view and clears the stored zoom |
 | **Download PNG** | Saves the chart as a 1200 × 800 px image at 2× resolution |
+| **Cursor readout** | Hover anywhere on the chart to see live λ (nm) and intensity values in the top-right corner |
 
 Double-clicking the chart resets the axes (Plotly built-in behaviour).
 
@@ -151,7 +152,7 @@ Click the **Draw** button in the toolbar to open the Annotations panel:
 - **Vertical line (V-Line)** — marks a specific wavelength (most common; useful for labelling peaks or spectral features)
 - **Horizontal line (H-Line)** — marks a specific intensity level
 - **Text** — places a text label at a given (x, y) coordinate on the chart
-- **Click-to-draw mode** — enable the "Drawing…" toggle in the panel, then click anywhere on the chart to instantly add a vertical line at that wavelength
+- **Click-to-draw mode** — enable the "Drawing…" toggle in the panel, then click anywhere on the chart (including empty areas between traces) to instantly add a vertical line at the exact clicked wavelength. A transparent overlay captures every click in the plot area, so annotation placement is reliable regardless of whether the cursor lands on a trace.
 - **Label** — optionally attach a text label to any annotation; click the label in the list to edit it inline
 - **Style controls** — choose from 6 preset colours and 3 line styles (solid / dash / dot)
 - **Manage** — all annotations are listed in the panel; hover a row and click the × to delete it
@@ -324,7 +325,7 @@ npm test          # run once
 npm run test:ui   # Vitest browser UI
 ```
 
-164 tests across 9 suites covering parsers, processing, calibration, edge cases, medium features, low-level features, heatmap panel behaviour, Phase 8 features (SpectraView round-trip CSV, grouping), and Phase 9 fixes (crop wavelength consistency, Excel file routing, DropZone filter).
+174 tests across 10 suites covering parsers, processing, calibration, edge cases, medium features, low-level features, heatmap panel behaviour, Phase 8 features (SpectraView round-trip CSV, grouping), Phase 9 fixes (crop wavelength consistency, Excel file routing, DropZone filter), and Phase 10 (pixel-to-data coordinate conversion for click-to-annotate).
 
 ### Build
 

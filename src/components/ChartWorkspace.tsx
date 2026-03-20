@@ -1,6 +1,7 @@
 import { useMemo, useState, useCallback, useRef } from 'react';
 import _PlotImport from 'react-plotly.js';
 import type { Data, Layout, Config, Annotations, Shape } from 'plotly.js';
+import { pixelToDataCoords } from '../lib/chartUtils';
 
 // Vite 8 (rolldown) pre-bundles react-plotly.js via __commonJSMin and does
 //   export default require_react_plotly()
@@ -20,6 +21,9 @@ if (typeof Plot !== 'function') {
 const MIN_BOTTOM = 64;
 const MAX_BOTTOM = 400;
 
+// Plotly layout margins — must stay in sync with `layout.margin` below
+const PLOT_MARGIN = { l: 70, t: 20, r: 20, b: 60 } as const;
+
 import type { Spectrum, ViewMode, HighlightedPeak, UserAnnotation } from '../types/spectrum';
 import { applyProcessing } from '../lib/processing';
 
@@ -34,8 +38,8 @@ interface Props {
   dragMode: 'zoom' | 'pan';
   /** Annotate mode — clicking on chart adds a vertical line annotation */
   annotateMode?: boolean;
-  /** Called when user clicks chart in annotate mode with the x (wavelength) value */
-  onAnnotationAdd?: (x: number) => void;
+  /** Called when user clicks chart in annotate mode with the clicked x and y values */
+  onAnnotationAdd?: (x: number, y: number) => void;
   /** Incremented by parent when "Reset Axes" is clicked — clears stored zoom */
   resetKey?: number;
   /** Called once the Plotly graphDiv is ready — parent uses it for reset/download */
@@ -50,6 +54,14 @@ export function ChartWorkspace({
   const [hoveredEx, setHoveredEx] = useState<number | null>(null);
   const [bottomHeight, setBottomHeight] = useState(112); // default matches old h-28
   const bottomLastY = useRef(0);
+
+  // Ref to the Plotly graph div — needed for pixel→data coordinate conversion
+  const chartDivRef = useRef<HTMLElement | null>(null);
+  // Ref to the cursor readout DOM node — updated directly to avoid re-renders on mousemove
+  const cursorReadoutRef = useRef<HTMLDivElement>(null);
+  // Mirror viewMode in a ref so the mousemove handler can read it without stale closures
+  const viewModeRef = useRef(viewMode);
+  viewModeRef.current = viewMode;
 
   // Zoom preservation: store current x/y ranges across re-renders
   type ZoomState = { x: [number, number]; y: [number, number] };
@@ -216,13 +228,33 @@ export function ChartWorkspace({
     }
   }, []);
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const handleClick = useCallback((event: any) => {
-    if (annotateMode && onAnnotationAdd && event.points?.length > 0) {
-      const x = event.points[0].x as number;
-      onAnnotationAdd(x);
+  // Handles clicks on the transparent overlay div in annotate mode.
+  // Uses pixel→data conversion so any click on the chart area (not just on a trace) works.
+  const handleOverlayClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (!chartDivRef.current || !onAnnotationAdd) return;
+    const coords = pixelToDataCoords(e.clientX, e.clientY, chartDivRef.current);
+    if (coords) onAnnotationAdd(coords.x, coords.y);
+  }, [onAnnotationAdd]);
+
+  // Updates the cursor readout via direct DOM write (no state → zero re-renders on mousemove).
+  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (!chartDivRef.current || !cursorReadoutRef.current) return;
+    const coords = pixelToDataCoords(e.clientX, e.clientY, chartDivRef.current);
+    const el = cursorReadoutRef.current;
+    if (coords) {
+      const isHeatmap = viewModeRef.current === 'heatmap';
+      el.textContent = isHeatmap
+        ? `Em: ${coords.x.toFixed(1)} nm   Ex: ${coords.y.toFixed(1)} nm`
+        : `λ: ${coords.x.toFixed(1)} nm   I: ${coords.y.toFixed(4)}`;
+      el.style.display = 'block';
+    } else {
+      el.style.display = 'none';
     }
-  }, [annotateMode, onAnnotationAdd]);
+  }, []);
+
+  const handleMouseLeave = useCallback(() => {
+    if (cursorReadoutRef.current) cursorReadoutRef.current.style.display = 'none';
+  }, []);
 
   if (spectra.length === 0) {
     return (
@@ -281,7 +313,7 @@ export function ChartWorkspace({
 
   const layout: Partial<Layout> = {
     autosize: true,
-    margin: { t: 20, r: 20, b: 60, l: 70 },
+    margin: { t: PLOT_MARGIN.t, r: PLOT_MARGIN.r, b: PLOT_MARGIN.b, l: PLOT_MARGIN.l },
     paper_bgcolor: 'white',
     plot_bgcolor: '#f8fafc',
     dragmode: dragMode as Layout['dragmode'],
@@ -356,18 +388,52 @@ export function ChartWorkspace({
     <div className="flex-1 min-h-0 flex flex-col">
       {/* Main chart area */}
       <div className="flex-1 relative min-h-0">
-        <div className="absolute inset-0">
+        <div
+          className="absolute inset-0"
+          onMouseMove={handleMouseMove}
+          onMouseLeave={handleMouseLeave}
+        >
           <Plot
             data={traces}
             layout={layout}
             config={config}
             style={{ width: '100%', height: '100%' }}
             useResizeHandler
-            onInitialized={(_, div) => onPlotInit(div)}
+            onInitialized={(_, div) => { chartDivRef.current = div; onPlotInit(div); }}
             onHover={handleHover}
             onUnhover={handleUnhover}
             onRelayout={handleRelayout}
-            onClick={handleClick}
+          />
+
+          {/* Transparent click-capture overlay — only active in annotate mode.
+              Covers the exact plot area (inside axes) so any click lands here. */}
+          {annotateMode && (
+            <div
+              style={{
+                position: 'absolute',
+                left: PLOT_MARGIN.l,
+                top: PLOT_MARGIN.t,
+                right: PLOT_MARGIN.r,
+                bottom: PLOT_MARGIN.b,
+                cursor: 'crosshair',
+                zIndex: 10,
+              }}
+              onClick={handleOverlayClick}
+            />
+          )}
+
+          {/* Live cursor coordinate readout — updated via ref, no React re-renders */}
+          <div
+            ref={cursorReadoutRef}
+            style={{
+              position: 'absolute',
+              top: PLOT_MARGIN.t + 6,
+              right: PLOT_MARGIN.r + 6,
+              display: 'none',
+              pointerEvents: 'none',
+              zIndex: 20,
+            }}
+            className="bg-white/90 border border-slate-200 rounded px-2 py-1 text-xs font-mono text-slate-500 shadow-sm select-none"
           />
         </div>
       </div>
